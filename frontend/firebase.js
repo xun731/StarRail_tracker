@@ -4,19 +4,41 @@
  * Firebase 整合模組
  *
  * ══════════════════════════════════════════════════════════
- *  設定步驟（只需做一次）
+ *  Firebase 完整設定 checklist（5 步全做完才會跨裝置同步）
  * ══════════════════════════════════════════════════════════
- *  1. 前往 https://console.firebase.google.com
- *  2. 點「新增專案」，輸入專案名稱後建立
- *  3. 左側選單 → Authentication → 開始使用
- *     → 登入方式 → Google → 啟用 → 儲存
- *  4. 左側選單 → Firestore Database → 建立資料庫
- *     → 以測試模式開始（30 天後記得設安全規則）
- *  5. 專案設定（齒輪圖示）→ 一般 → 你的應用程式
- *     → 點「</> 網頁應用程式」→ 複製 firebaseConfig 物件
- *  6. 把下方 FIREBASE_CONFIG 裡的值換成你自己的
  *
- *  完成後重新整理頁面，右上角會出現「Google 登入」按鈕。
+ *  [ ] 1. 建立專案：https://console.firebase.google.com → 新增專案
+ *
+ *  [ ] 2. 啟用 Google 登入：
+ *         左側 → Authentication → Sign-in method → Google → 啟用 → 儲存
+ *
+ *  [ ] 3. 加入授權網域（部署後必要！）：
+ *         Authentication → Settings → Authorized domains → Add domain
+ *         加入：starrail-tracker.netlify.app（或你部署後的網域）
+ *
+ *  [ ] 4. 建立 Firestore 資料庫：
+ *         左側 → Firestore Database → 建立資料庫
+ *         地區建議：asia-east1（台灣 / 香港延遲最低）
+ *         模式：可先選「測試模式」但 ⚠ **30 天會到期，到期後寫入會被拒絕**
+ *
+ *  [ ] 5. 部署安全規則（**最容易漏的一步**）：
+ *         Firestore Database → 規則 標籤
+ *         把專案根目錄的 firestore.rules 內容貼進去 → 發佈
+ *         （沒做這步：30 天後所有寫入都會 silent fail，資料只在本機）
+ *
+ *  [ ] 6. 複製設定值：
+ *         專案設定（齒輪）→ 一般 → 你的應用程式
+ *         點「</> 網頁應用程式」→ 複製 firebaseConfig 物件
+ *         填到下方 FIREBASE_CONFIG
+ *
+ *  完成後重新整理頁面，登入 → 新增一筆紀錄 → 去 Firebase Console
+ *  的 Firestore Database 看 users/{uid} 應該會有 pools 欄位。
+ *
+ *  ── 診斷指令（瀏覽器 DevTools Console 直接打）─────────────────
+ *    hsrDebug.testWrite()    強制寫一筆測試資料到雲端
+ *    hsrDebug.testRead()     讀目前雲端內容
+ *    hsrDebug.forceUpload()  把目前的 state 立刻同步上去
+ *    hsrDebug.user()         確認登入身分
  * ══════════════════════════════════════════════════════════
  */
 

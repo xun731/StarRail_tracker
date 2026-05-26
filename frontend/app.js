@@ -133,9 +133,12 @@ function persistData() {
       try {
         await saveToCloud(state.user.uid, payload);
         showSync('saved');
+        console.info('[saveToCloud] 寫入成功 users/' + state.user.uid);
       } catch (err) {
         // err 來自 firebase.js classifyFirebaseError
-        showSync('error', err?.message || '未知錯誤');
+        // 寫入失敗 → error 樣式不自動消失，直到使用者點掉，避免錯過
+        showSync('error', `雲端寫入失敗：${err?.message || err}（點此關閉）`);
+        console.error('[saveToCloud] 寫入失敗', err);
       }
     }, 1200);
   } else {
@@ -143,25 +146,38 @@ function persistData() {
   }
 }
 
+/**
+ * 讀取使用者資料。
+ * 回傳：{ source: 'cloud' | 'local' | 'empty', localHasRecords: boolean }
+ *   - 'cloud'  : 從 Firestore 讀到資料，已套用
+ *   - 'local'  : 沒讀到雲端資料、改用 localStorage
+ *   - 'empty'  : 雲端與本機都沒資料
+ *   localHasRecords 用於判斷是否需要詢問「上傳本機資料到雲端」
+ */
 async function loadData() {
+  const local = loadLocal();
+  const localHasRecords = !!(local?.pools && Object.values(local.pools)
+    .some(p => Array.isArray(p?.records) && p.records.length > 0));
+
   if (state.user) {
     try {
       const cloud = await loadFromCloud(state.user.uid);
       if (cloud?.pools) {
         state.pools = cloud.pools;
         migrateOrCompactOrders();
-        return;
+        return { source: 'cloud', localHasRecords };
       }
     } catch (err) {
       showSync('error', `讀取雲端失敗：${err?.message || err}`);
       // 繼續嘗試 local
     }
   }
-  const local = loadLocal();
   if (local?.pools) {
     state.pools = local.pools;
     migrateOrCompactOrders();
+    return { source: 'local', localHasRecords };
   }
+  return { source: 'empty', localHasRecords: false };
 }
 
 // ── 同步狀態列 ────────────────────────────────────────────────────────────────
@@ -194,7 +210,7 @@ initFirebase();
 
 onAuthChange(async user => {
   state.user = user;
-  await loadData();
+  const result = await loadData();
   renderAll();
 
   if (user) {
@@ -204,6 +220,23 @@ onAuthChange(async user => {
     $('auth-avatar').src = user.photoURL || '';
     $('auth-name').textContent = user.displayName || user.email;
     showSync('saved');
+
+    // 首次登入遷移：雲端是空的、但本機有紀錄 → 詢問是否上傳
+    if (result?.source === 'local' && result?.localHasRecords) {
+      const totals = Object.values(state.pools)
+        .reduce((s, p) => s + (p.records?.length || 0), 0);
+      openConfirm({
+        title: '上傳本機資料到雲端？',
+        message:
+          `偵測到雲端帳號是空的，但本機有 <strong>${totals}</strong> 筆紀錄。<br>` +
+          `要把本機資料上傳到雲端（Firestore）嗎？<br>` +
+          `<span style="color:var(--muted)">之後在其他裝置登入同帳號就能看到。</span>`,
+        onOk: () => {
+          persistData();
+          showSync('saving');
+        },
+      });
+    }
   } else {
     $('auth-loading').style.display  = 'none';
     $('auth-signed-in').style.display = 'none';
@@ -215,6 +248,30 @@ onAuthChange(async user => {
     showSync('local');
   }
 });
+
+// ── DevTools 診斷工具 ─────────────────────────────────────────────────────────
+// 在 Console 用 hsrDebug.testWrite() 等指令來驗證雲端讀寫是否真的成功
+window.hsrDebug = {
+  state: () => state,
+  user: () => state.user,
+  testWrite: async () => {
+    if (!state.user) { console.warn('未登入'); return; }
+    try {
+      await saveToCloud(state.user.uid, { pools: state.pools, _testAt: new Date().toISOString() });
+      console.log('✅ 寫入成功，去 Firebase Console 看 users/' + state.user.uid);
+    } catch (e) { console.error('❌ 寫入失敗', e); }
+  },
+  testRead: async () => {
+    if (!state.user) { console.warn('未登入'); return; }
+    try {
+      const data = await loadFromCloud(state.user.uid);
+      console.log('☁ 雲端目前的資料：', data);
+      return data;
+    } catch (e) { console.error('❌ 讀取失敗', e); }
+  },
+  forceUpload: () => persistData(),
+};
+console.info('%c[HSR Tracker] 診斷指令：hsrDebug.testWrite() / hsrDebug.testRead() / hsrDebug.forceUpload()', 'color:#7c5cbf');
 
 $('sign-in-btn')?.addEventListener('click', async () => {
   try {

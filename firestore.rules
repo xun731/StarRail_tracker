@@ -1,0 +1,40 @@
+rules_version = '2';
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Firestore 安全規則 — 星穹鐵道抽卡紀錄
+// ────────────────────────────────────────────────────────────────────────────
+//  規則重點：
+//   - 已登入使用者只能讀/寫自己的文件（users/{自己的 uid}）
+//   - 沒登入：拒絕所有讀寫
+//   - 一個使用者不能讀別人的資料
+//
+//  部署方式（擇一）：
+//
+//  方法 A（推薦給初學者）：Firebase Console 直接貼
+//    1. 打開 Firebase Console → 你的專案
+//    2. 左側選單 → Firestore Database → 規則 標籤
+//    3. 把整個檔案內容貼進去（取代原本的內容）
+//    4. 點「發佈」
+//
+//  方法 B：用 Firebase CLI（要先 npm i -g firebase-tools）
+//    firebase login
+//    firebase init firestore   # 第一次設定
+//    firebase deploy --only firestore:rules
+// ════════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // users 集合：每個文件 ID = Firebase Auth uid
+    match /users/{userId} {
+      // 已登入 + 是自己的文件 → 允許讀寫
+      allow read, write: if request.auth != null
+                         && request.auth.uid == userId;
+    }
+
+    // 其餘所有路徑一律拒絕（顯式宣告）
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
