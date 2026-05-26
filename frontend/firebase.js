@@ -54,9 +54,28 @@ function onAuthChange(callback) {
 }
 
 async function signInWithGoogle() {
-  if (!auth) return;
-  const provider = new firebase.auth.GoogleAuthProvider();
-  await auth.signInWithPopup(provider);
+  if (!auth) {
+    throw { code: 'no-firebase', message: 'Firebase 未設定，無法登入' };
+  }
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await auth.signInWithPopup(provider);
+  } catch (e) {
+    const map = {
+      'auth/unauthorized-domain':
+        `此網域未授權登入。請到 Firebase Console → Authentication → Settings → Authorized domains 加入「${location.hostname}」`,
+      'auth/popup-blocked':       '瀏覽器擋住登入彈窗，請允許後再試',
+      'auth/popup-closed-by-user':'已取消登入',
+      'auth/cancelled-popup-request': '已取消登入（前一個彈窗未關閉）',
+      'auth/network-request-failed': '網路問題，無法連到 Firebase',
+      'auth/operation-not-allowed':  '此專案尚未啟用 Google 登入。請到 Firebase Console → Authentication → Sign-in method 啟用 Google',
+    };
+    throw {
+      code: e?.code || 'unknown',
+      message: map[e?.code] || (e?.message || '登入失敗'),
+      raw: e,
+    };
+  }
 }
 
 async function signOut() {

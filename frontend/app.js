@@ -216,8 +216,28 @@ onAuthChange(async user => {
   }
 });
 
-$('sign-in-btn')?.addEventListener('click', signInWithGoogle);
+$('sign-in-btn')?.addEventListener('click', async () => {
+  try {
+    await signInWithGoogle();
+  } catch (err) {
+    showSync('error', err?.message || '登入失敗');
+    console.error('[signInWithGoogle]', err?.code, err);
+  }
+});
 $('sign-out-btn')?.addEventListener('click', signOut);
+
+// 防呆：5 秒內 Firebase 沒回應就強制顯示「未登入」畫面，避免卡在「載入中…」
+setTimeout(() => {
+  const loading = $('auth-loading');
+  if (loading && loading.style.display !== 'none') {
+    loading.style.display = 'none';
+    $('auth-signed-out').style.display = '';
+    if (!FIREBASE_CONFIGURED) {
+      $('auth-signed-out').innerHTML =
+        '<p class="auth-hint">💾 未設定 Firebase，資料存於本機</p>';
+    }
+  }
+}, 5000);
 
 // ── Tab 切換 ──────────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(btn => {
