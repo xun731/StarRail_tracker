@@ -940,7 +940,7 @@ const importStatus  = $('import-status');
  * 用 location.hostname 判斷，使用者完全不用設定。
  * 部署完後，把下方的 PRODUCTION_BACKEND 換成你的 Render URL。
  */
-const PRODUCTION_BACKEND = 'https://YOUR-APP.onrender.com';  // ← 部署後改這行
+const PRODUCTION_BACKEND = 'https://starrail-tracker-backend.onrender.com';  // ← 部署後改這行
 function getDefaultBackend() {
   const host = location.hostname;
   if (host === 'localhost' || host === '127.0.0.1' || host === '') {
