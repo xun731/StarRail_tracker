@@ -312,7 +312,7 @@ table.records-table tr:hover td { background: var(--surface2); }
   background: var(--surface2); border-radius: 8px;
   font-size: .85rem; color: var(--muted);
 }
-.bar-pity-now .bar-thumb { background: var(--surface); border: 1px solid var(--border); }
+.bar-pity-now .bar-thumb { background: var(--surface); border: 1px dashed var(--border); }
 .bar-pity-now strong { color: var(--text); }
 
 /* Order badge in bar list */
@@ -540,7 +540,7 @@ table.records-table tr:hover td { background: var(--surface2); }
 .bar-source-icon, .ri-source-icon {
   font-size: .82rem; opacity: .8;
 }
-.bar-item.is-import { border-left-style: dashed; }
+/* .bar-item.is-import { border-left-style: dashed; } */
 
 /* ── App Footer (備份) ─────────────────────────────────── */
 .app-footer {
