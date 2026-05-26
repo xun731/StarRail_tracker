@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:honkai-star-rail.fandom.com)",
+      "WebFetch(domain:www.prydwen.gg)",
+      "WebSearch",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:zh.wikipedia.org)",
+      "WebFetch(domain:forum.gamer.com.tw)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(findstr \":3000\")",
+      "Bash(Start-Process python *)",
+      "Bash(grep -c \"HoYoLAB App\\\\|tools/get_authkey\\\\|tools\\\\\\\\\\\\\\\\get_authkey\" \"C:/Users/tracy/OneDrive/桌面/大一/星鐵專案/frontend/index.html\" \"C:/Users/tracy/OneDrive/桌面/大一/星鐵專案/frontend/get_authkey.ps1\" \"C:/Users/tracy/OneDrive/桌面/大一/星鐵專案/backend/README.md\")",
+      "Bash(xargs grep -l \"deploy\\\\|production\\\\|heroku\\\\|netlify\\\\|vercel\")"
+    ]
+  }
+}

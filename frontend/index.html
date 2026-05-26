@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>星穹鐵道抽卡紀錄</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- 頁首 + 登入狀態 -->
+    <header>
+      <div class="header-top">
+        <div>
+          <h1>⭐ 星穹鐵道抽卡紀錄</h1>
+          <p class="subtitle">追蹤保底進度，記錄每一次出金</p>
+        </div>
+        <div id="auth-block" class="auth-block">
+          <div id="auth-loading" class="auth-hint">載入中…</div>
+          <div id="auth-signed-in" style="display:none" class="auth-user-row">
+            <img id="auth-avatar" class="auth-avatar" src="" alt="avatar" />
+            <span id="auth-name" class="auth-name"></span>
+            <button id="sign-out-btn" class="btn-ghost">登出</button>
+          </div>
+          <div id="auth-signed-out" style="display:none">
+            <button id="sign-in-btn" class="btn-google">
+              <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+              使用 Google 登入
+            </button>
+            <p class="auth-hint">登入後資料可跨裝置同步</p>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- 同步狀態 -->
+    <div id="sync-bar" class="sync-bar" style="display:none"></div>
+
+    <!-- 主要 Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="input">新增紀錄</button>
+      <button class="tab" data-tab="import">匯入紀錄</button>
+      <button class="tab" data-tab="stats">統計分析</button>
+      <button class="tab" data-tab="info">保底說明</button>
+    </nav>
+
+    <!-- ═══ 新增紀錄 ═══ -->
+    <section id="tab-input" class="tab-content active">
+
+      <!-- 卡池選擇 -->
+      <div class="card">
+        <h2>選擇卡池</h2>
+        <div class="pool-selector">
+          <button class="pool-btn active" data-pool="character">角色活動池</button>
+          <button class="pool-btn" data-pool="light_cone">光錐活動池</button>
+          <button class="pool-btn" data-pool="collab_char">聯動角色池</button>
+          <button class="pool-btn" data-pool="collab_lc">聯動光錐池</button>
+          <button class="pool-btn" data-pool="standard">常駐池</button>
+        </div>
+      </div>
+
+      <!-- 目前保底進度 -->
+      <div class="card">
+        <h2>目前保底進度</h2>
+        <div class="pity-row">
+          <div class="pity-input-group">
+            <label>距上次出金已抽</label>
+            <div class="pity-stepper">
+              <button class="stepper-btn" id="pity-minus">−</button>
+              <input type="number" id="pity-now" min="0" max="89" value="0" />
+              <button class="stepper-btn" id="pity-plus">+</button>
+            </div>
+            <span class="pity-max-hint" id="pity-max-hint">/ 90 大保底</span>
+          </div>
+          <label class="checkbox-label" id="guaranteed-row">
+            <input type="checkbox" id="guaranteed" />
+            大保底觸發中（下一個五星必定是 UP）
+          </label>
+        </div>
+        <div class="pity-bar-track">
+          <div class="pity-bar-fill" id="input-pity-bar"></div>
+        </div>
+      </div>
+
+      <!-- 記錄表單 -->
+      <div class="card">
+        <h2>記錄出金</h2>
+        <div class="record-form">
+          <!-- 名稱 + 自動補全 -->
+          <div class="autocomplete-wrapper">
+            <label>角色 / 光錐名稱</label>
+            <input type="text" id="name-input" placeholder="輸入名稱搜尋…" autocomplete="off" />
+            <ul id="autocomplete-list" class="autocomplete-list" style="display:none"></ul>
+          </div>
+
+          <!-- 本保底抽數 -->
+          <div class="form-field">
+            <label>本保底消耗抽數</label>
+            <input type="number" id="pull-count-input" min="1" max="90" placeholder="e.g. 76" />
+          </div>
+
+          <!-- 插入位置 -->
+          <div class="form-field" id="insert-pos-row">
+            <label>插入位置</label>
+            <select id="insert-pos" class="form-select">
+              <option value="-1">新增至最上方（最新，預設）</option>
+            </select>
+          </div>
+
+          <!-- 是否歪（常駐池不顯示） -->
+          <label class="checkbox-label" id="is-off-row">
+            <input type="checkbox" id="is-off" />
+            歪了（未出 UP 目標）
+          </label>
+
+          <!-- 歪的 UP 池（歪時才顯示，選填） -->
+          <div id="up-banner-row" class="autocomplete-wrapper" style="display:none">
+            <label>歪自哪個 UP 池（選填）</label>
+            <input type="text" id="up-banner-input" placeholder="輸入當時的 UP 角色 / 光錐名稱…" autocomplete="off" />
+            <ul id="up-banner-list" class="autocomplete-list" style="display:none"></ul>
+          </div>
+
+          <button id="add-record-btn" class="btn-primary">+ 記錄出金</button>
+        </div>
+      </div>
+
+      <!-- 最近紀錄 -->
+      <div class="card">
+        <h2>最近紀錄 <span id="record-badge" class="badge">0 筆</span></h2>
+        <div id="record-list" class="record-list">
+          <p class="empty-hint">尚未有任何紀錄</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ═══ 匯入紀錄 ═══ -->
+    <section id="tab-import" class="tab-content">
+
+      <!-- 教學步驟 -->
+      <div class="card">
+        <h2>📖 取得抽卡網址</h2>
+        <p class="info-note">
+          星穹鐵道<strong>沒有內建</strong>「複製抽卡 URL」按鈕，HoYoLAB App 也僅顯示已擁有角色，無法看抽卡紀錄。
+          因此唯一可行的做法是從<strong>遊戲本機快取</strong>讀取（遊戲打開抽卡頁時自己會寫入快取）。
+          以下兩種方法擇一即可。
+        </p>
+
+        <!-- 方法 A：用腳本 -->
+        <h3 class="sub-section">⚡ 方法 A：使用 PowerShell 腳本（推薦，便利）</h3>
+        <div class="warning-box">
+          <strong>⚠ 風險聲明：</strong>
+          腳本會<strong>讀取</strong>星穹鐵道本機快取檔（<code>data_2</code>）並從中 regex 抽出 URL，
+          <strong>只讀不寫</strong>、不注入遊戲、不傳送資料到外部。
+          技術上違反 miHoYo TOS，但 Paimon.moe / Fribbel / Snap.Hutao / Starward 等社群工具都採同手法，
+          <strong>多年無大規模封號案例</strong>。風險不為零，使用即接受風險。
+        </div>
+
+        <p style="margin-top:14px"><strong>取得腳本（三選一）：</strong></p>
+        <div class="script-actions">
+          <a href="get_authkey.ps1" download="get_authkey.ps1" class="btn-primary">📥 下載腳本</a>
+          <button id="copy-script-btn" class="btn-ghost" type="button">📋 複製腳本內容</button>
+          <a href="https://github.com/" target="_blank" rel="noopener" class="btn-ghost"
+             title="待專案推上 GitHub 後補上正確網址">🐙 GitHub 原始碼</a>
+        </div>
+
+        <p style="margin-top:14px"><strong>執行步驟：</strong></p>
+        <ol class="import-steps">
+          <li>啟動星穹鐵道，進入 <strong>躍遷 → 紀錄</strong> 頁面（讓遊戲寫入快取）</li>
+          <li>找到下載的 <code>get_authkey.ps1</code>，右鍵 → <strong>「使用 PowerShell 執行」</strong></li>
+          <li>若被 Windows 阻擋（紅字），改用 PowerShell 開啟並貼：<br>
+            <code>powershell -ExecutionPolicy Bypass -File .\get_authkey.ps1</code></li>
+          <li>URL 會自動進剪貼簿，回此頁 <strong>Ctrl+V</strong> 貼到下方輸入框</li>
+        </ol>
+
+        <!-- 方法 B：純手動 -->
+        <details class="advanced-section">
+          <summary>🔒 方法 B：完全手動（零腳本，最透明）</summary>
+          <div class="advanced-content">
+            <p>適合不信任任何腳本、想完全看到自己在做什麼的使用者。流程就是腳本做的事，只是用手做：</p>
+            <ol class="import-steps">
+              <li>啟動星穹鐵道，進入 <strong>躍遷 → 紀錄</strong> 頁面</li>
+              <li>用檔案總管打開：<br>
+                <code>{遊戲安裝路徑}\StarRail_Data\webCaches\&lt;最新版本&gt;\Cache\Cache_Data\data_2</code>
+              </li>
+              <li>用 Notepad++、VSCode 或任何純文字編輯器開啟 <code>data_2</code></li>
+              <li><strong>Ctrl+F</strong> 搜尋 <code>getGachaLog</code></li>
+              <li>找到 <code>https://...</code> 開頭、含 <code>authkey=</code> 的長 URL（取最後一個就是最新的）</li>
+              <li>整段複製，貼到下方輸入框</li>
+            </ol>
+            <p class="info-note">
+              💡 沒有 Notepad++ 也可以用 PowerShell 一行查（這條只「讀」沒「執行」）：<br>
+              <code>Get-Content "..\data_2" -Raw | Select-String "https://[^\s]+getGachaLog[^\s]+authkey=[^\s]+"</code>
+            </p>
+          </div>
+        </details>
+
+        <p class="info-note" style="margin-top:16px">
+          authkey 約 24 小時失效，過期重複以上任一方法即可。
+        </p>
+      </div>
+
+      <!-- URL 輸入 -->
+      <div class="card">
+        <h2>🔗 貼上抽卡網址</h2>
+        <div class="form-field">
+          <label>抽卡紀錄網址（含 authkey）</label>
+          <textarea id="import-url" class="import-url" rows="3"
+            placeholder="貼上完整網址，例如：https://public-operation-hkrpg-sg.hoyoverse.com/...?authkey=..."></textarea>
+        </div>
+        <button id="import-fetch-btn" class="btn-primary">獲取紀錄</button>
+        <div id="import-status" class="import-status" style="display:none"></div>
+
+        <details class="advanced-section" style="margin-top:14px">
+          <summary>⚙ 進階：自訂後端位址（一般用戶不用碰）</summary>
+          <div class="advanced-content">
+            <p class="info-note" style="margin:0 0 10px">
+              預設值會自動依目前網域選擇：本機開發 → <code>http://localhost:5000</code>；
+              線上版 → 雲端後端位址。除非你自架後端，否則維持預設即可。
+            </p>
+            <div class="form-field">
+              <input type="text" id="import-backend" placeholder="http://localhost:5000" />
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <!-- 預覽 -->
+      <div id="import-preview" class="card" style="display:none">
+        <h2>📋 預覽抽卡紀錄</h2>
+        <p class="info-note">
+          勾選要匯入的紀錄；<strong>取消勾選你已手動輸入過的</strong>。
+          匯入紀錄會以 📥 標記，與手動紀錄一起排序顯示。
+        </p>
+        <div class="import-controls">
+          <button class="btn-ghost" id="import-select-all">全選</button>
+          <button class="btn-ghost" id="import-select-none">全不選</button>
+          <span class="import-selected-count" id="import-selected-count"></span>
+        </div>
+        <div id="import-preview-list" class="import-preview-list"></div>
+        <button id="import-confirm-btn" class="btn-primary">確認匯入勾選的紀錄</button>
+      </div>
+
+    </section>
+
+    <!-- ═══ 統計分析 ═══ -->
+    <section id="tab-stats" class="tab-content">
+      <div id="stats-empty-hint" class="card"><p class="empty-hint">尚未有任何紀錄，請先在「新增紀錄」頁面新增資料</p></div>
+      <div id="stats-content" style="display:none">
+
+        <!-- 角色池統計 -->
+        <div class="pool-stats-section" id="stats-character">
+          <div class="pool-stats-header character-header">角色活動池</div>
+          <div class="stats-grid" id="sg-character"></div>
+          <div class="card no-top-radius">
+            <h2>保底進度</h2>
+            <div class="pity-bar-track"><div class="pity-bar-fill" id="stat-pity-bar-character"></div></div>
+            <div class="pity-labels">
+              <span id="stat-pity-label-character"></span>
+              <span id="stat-guaranteed-label-character"></span>
+            </div>
+          </div>
+          <div class="card no-top-radius">
+            <h2>出金紀錄</h2>
+            <div id="records-table-character" class="bar-list"></div>
+          </div>
+        </div>
+
+        <!-- 光錐池統計 -->
+        <div class="pool-stats-section" id="stats-light_cone">
+          <div class="pool-stats-header lc-header">光錐活動池</div>
+          <div class="stats-grid" id="sg-light_cone"></div>
+          <div class="card no-top-radius">
+            <h2>保底進度</h2>
+            <div class="pity-bar-track"><div class="pity-bar-fill" id="stat-pity-bar-light_cone"></div></div>
+            <div class="pity-labels">
+              <span id="stat-pity-label-light_cone"></span>
+              <span id="stat-guaranteed-label-light_cone"></span>
+            </div>
+          </div>
+          <div class="card no-top-radius">
+            <h2>出金紀錄</h2>
+            <div id="records-table-light_cone" class="bar-list"></div>
+          </div>
+        </div>
+
+        <!-- 聯動角色池統計 -->
+        <div class="pool-stats-section" id="stats-collab_char">
+          <div class="pool-stats-header collab-char-header">聯動角色池</div>
+          <div class="stats-grid" id="sg-collab_char"></div>
+          <div class="card no-top-radius">
+            <h2>保底進度</h2>
+            <div class="pity-bar-track"><div class="pity-bar-fill" id="stat-pity-bar-collab_char"></div></div>
+            <div class="pity-labels">
+              <span id="stat-pity-label-collab_char"></span>
+              <span id="stat-guaranteed-label-collab_char"></span>
+            </div>
+          </div>
+          <div class="card no-top-radius">
+            <h2>出金紀錄</h2>
+            <div id="records-table-collab_char" class="bar-list"></div>
+          </div>
+        </div>
+
+        <!-- 聯動光錐池統計 -->
+        <div class="pool-stats-section" id="stats-collab_lc">
+          <div class="pool-stats-header collab-lc-header">聯動光錐池</div>
+          <div class="stats-grid" id="sg-collab_lc"></div>
+          <div class="card no-top-radius">
+            <h2>保底進度</h2>
+            <div class="pity-bar-track"><div class="pity-bar-fill" id="stat-pity-bar-collab_lc"></div></div>
+            <div class="pity-labels">
+              <span id="stat-pity-label-collab_lc"></span>
+              <span id="stat-guaranteed-label-collab_lc"></span>
+            </div>
+          </div>
+          <div class="card no-top-radius">
+            <h2>出金紀錄</h2>
+            <div id="records-table-collab_lc" class="bar-list"></div>
+          </div>
+        </div>
+
+        <!-- 常駐池統計 -->
+        <div class="pool-stats-section" id="stats-standard">
+          <div class="pool-stats-header std-header">常駐池</div>
+          <div class="stats-grid" id="sg-standard"></div>
+          <div class="card no-top-radius">
+            <h2>保底進度</h2>
+            <div class="pity-bar-track"><div class="pity-bar-fill" id="stat-pity-bar-standard"></div></div>
+            <div class="pity-labels">
+              <span id="stat-pity-label-standard"></span>
+            </div>
+          </div>
+          <div class="card no-top-radius">
+            <h2>出金紀錄</h2>
+            <div id="records-table-standard" class="bar-list"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ═══ 保底說明 ═══ -->
+    <section id="tab-info" class="tab-content">
+      <div class="card">
+        <h2>📋 官方保底機制說明</h2>
+        <p class="info-note">以下數據為官方公開資訊，非本工具估算。</p>
+      </div>
+
+      <div class="info-pool-grid">
+
+        <div class="info-pool-card">
+          <div class="info-pool-title character-header">角色活動池</div>
+          <table class="info-table">
+            <tr><td>基礎五星機率</td><td class="val">0.600%</td></tr>
+            <tr><td>軟保底起始</td><td class="val">第 74 抽</td></tr>
+            <tr><td>大保底（硬保底）</td><td class="val">第 90 抽</td></tr>
+            <tr><td>UP 機率（首次）</td><td class="val">50%</td></tr>
+            <tr><td>UP 機率（大保底）</td><td class="val">100%</td></tr>
+            <tr><td>四星保底</td><td class="val">每 10 抽</td></tr>
+          </table>
+          <div class="info-note">
+            <strong>軟保底：</strong>第 73 抽後每抽機率線性增加，從 0.6% 逐步提升至 100%（第 90 抽）。
+          </div>
+        </div>
+
+        <div class="info-pool-card">
+          <div class="info-pool-title lc-header">光錐活動池</div>
+          <table class="info-table">
+            <tr><td>基礎五星機率</td><td class="val">0.800%</td></tr>
+            <tr><td>軟保底起始</td><td class="val">第 65 抽</td></tr>
+            <tr><td>大保底（硬保底）</td><td class="val">第 80 抽</td></tr>
+            <tr><td>UP 機率（首次）</td><td class="val">75%</td></tr>
+            <tr><td>UP 機率（大保底）</td><td class="val">100%</td></tr>
+            <tr><td>四星保底</td><td class="val">每 10 抽</td></tr>
+          </table>
+          <div class="info-note">
+            <strong>軟保底：</strong>第 64 抽後每抽機率線性增加，從 0.8% 逐步提升至 100%（第 80 抽）。
+          </div>
+        </div>
+
+        <div class="info-pool-card">
+          <div class="info-pool-title collab-char-header">聯動角色池</div>
+          <table class="info-table">
+            <tr><td>基礎五星機率</td><td class="val">0.600%</td></tr>
+            <tr><td>軟保底起始</td><td class="val">第 74 抽</td></tr>
+            <tr><td>大保底（硬保底）</td><td class="val">第 90 抽</td></tr>
+            <tr><td>UP 機率（首次）</td><td class="val">50%</td></tr>
+            <tr><td>UP 機率（大保底）</td><td class="val">100%</td></tr>
+            <tr><td>四星保底</td><td class="val">每 10 抽</td></tr>
+          </table>
+          <div class="info-note">
+            <strong>保底完全獨立</strong>。首期聯動為 Fate/stay night，登場角色：Saber、Archer。
+            歪了會觸發大保底（下一個聯動五星必定是 UP 目標）。
+          </div>
+        </div>
+
+        <div class="info-pool-card">
+          <div class="info-pool-title collab-lc-header">聯動光錐池</div>
+          <table class="info-table">
+            <tr><td>基礎五星機率</td><td class="val">0.800%</td></tr>
+            <tr><td>軟保底起始</td><td class="val">第 65 抽</td></tr>
+            <tr><td>大保底（硬保底）</td><td class="val">第 80 抽</td></tr>
+            <tr><td>UP 機率（首次）</td><td class="val">75%</td></tr>
+            <tr><td>UP 機率（大保底）</td><td class="val">100%</td></tr>
+            <tr><td>四星保底</td><td class="val">每 10 抽</td></tr>
+          </table>
+          <div class="info-note">
+            <strong>保底完全獨立</strong>於聯動角色池。Fate 聯動光錐：沒有回報的加冕、理想燃燒的地獄。
+          </div>
+        </div>
+
+        <div class="info-pool-card">
+          <div class="info-pool-title std-header">常駐池</div>
+          <table class="info-table">
+            <tr><td>基礎五星機率</td><td class="val">0.600%</td></tr>
+            <tr><td>軟保底起始</td><td class="val">第 74 抽</td></tr>
+            <tr><td>大保底（硬保底）</td><td class="val">第 90 抽</td></tr>
+            <tr><td>UP 機制</td><td class="val">無</td></tr>
+            <tr><td>四星保底</td><td class="val">每 10 抽</td></tr>
+          </table>
+          <div class="info-note">常駐池五星從以下中隨機出現：克拉拉、傑帕德、布洛妮婭、瓦爾特、姬子、白露、彥卿。</div>
+        </div>
+
+      </div>
+
+      <div class="card">
+        <h2>❓ 常見問題</h2>
+        <div class="faq">
+          <div class="faq-item">
+            <div class="faq-q">「歪」是什麼意思？</div>
+            <div class="faq-a">在角色 / 光錐活動池中，五星有 50%（角色）或 75%（光錐）機率出目標 UP 角色 / 光錐。若出了非 UP 的常駐五星，稱為「歪」，並觸發大保底：下一個五星必定是 UP 目標。</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">軟保底是什麼？</div>
+            <div class="faq-a">從特定抽數開始（角色池第 74 抽、光錐池第 65 抽），每一抽的五星機率會大幅提升，直到硬保底（100% 出五星）為止。</div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-q">抽卡紀錄資料存在哪裡？</div>
+            <div class="faq-a">登入 Google 帳號後資料儲存在雲端（Firebase），可跨裝置存取。未登入時資料僅存在瀏覽器本機，清除瀏覽器資料會遺失。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ 資料管理（備份） ═══ -->
+    <footer class="app-footer">
+      <button id="export-btn" class="btn-ghost" title="下載 JSON 備份">📤 匯出備份</button>
+      <button id="import-btn" class="btn-ghost" title="從 JSON 還原資料">📥 匯入備份</button>
+      <input type="file" id="import-file" accept=".json,application/json" style="display:none" />
+    </footer>
+
+  </div><!-- /container -->
+
+  <!-- ═══ 確認對話框 ═══ -->
+  <div id="confirm-modal" class="modal-overlay" style="display:none">
+    <div class="modal-card modal-card-narrow">
+      <div class="modal-header">
+        <h2 id="confirm-title">確認</h2>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message" style="font-size:.92rem; color: var(--text); line-height:1.6;"></p>
+      </div>
+      <div class="modal-footer">
+        <button id="confirm-cancel" class="btn-ghost">取消</button>
+        <button id="confirm-ok" class="btn-primary">確認</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 編輯紀錄 Modal ═══ -->
+  <div id="edit-modal" class="modal-overlay" style="display:none">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>編輯紀錄 <span id="edit-modal-order" class="modal-order"></span></h2>
+        <button class="modal-close" id="edit-modal-close" title="取消">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="autocomplete-wrapper">
+          <label>角色 / 光錐名稱</label>
+          <input type="text" id="edit-name-input" autocomplete="off" />
+          <ul id="edit-autocomplete-list" class="autocomplete-list" style="display:none"></ul>
+        </div>
+        <div class="form-field">
+          <label>本保底消耗抽數</label>
+          <input type="number" id="edit-pull-count-input" min="1" max="90" />
+        </div>
+        <label class="checkbox-label" id="edit-is-off-row">
+          <input type="checkbox" id="edit-is-off" />
+          歪了（未出 UP 目標）
+        </label>
+        <div id="edit-up-banner-row" class="autocomplete-wrapper" style="display:none">
+          <label>歪自哪個 UP 池（選填）</label>
+          <input type="text" id="edit-up-banner-input" autocomplete="off" />
+          <ul id="edit-up-banner-list" class="autocomplete-list" style="display:none"></ul>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="edit-cancel-btn" class="btn-ghost">取消</button>
+        <button id="edit-save-btn" class="btn-primary">儲存修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase SDKs（需設定 firebase.js 後才會啟用） -->
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+  <script src="data.js"></script>
+  <script src="firebase.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

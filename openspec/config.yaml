@@ -1,0 +1,91 @@
+schema: spec-driven
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Project context
+# ──────────────────────────────────────────────────────────────────────────────
+context: |
+  專案：星穹鐵道抽卡紀錄（StarRail Gacha Tracker）
+  類型：大一學生自主學習專案，用於練習前端 + Python 後端整合
+  使用者：自己（單人玩家）以及未來分享給朋友
+
+  ── 技術棧 ─────────────────────────────────────────────────
+  前端：純 HTML / CSS / JavaScript（無框架，無 build step）
+  後端：Python 3 + Flask 3.0 + flask-cors + requests
+  儲存：Firebase Firestore（雲端）+ localStorage（離線備援）
+  認證：Firebase Google Auth（可選；未設定時用 localStorage）
+  圖片資源：Mar-7th/StarRailRes（角色 / 光錐圖檔 CDN）
+  外部 API：HoYoLAB / MiHoYo gacha record API（公開抽卡紀錄端點）
+  部署目標（Phase 4）：Netlify（前端）+ Render / Railway（後端）
+
+  ── 專案結構 ───────────────────────────────────────────────
+  frontend/
+    index.html        三 tabs：新增紀錄 / 匯入紀錄 / 統計分析 / 保底說明
+    style.css         深色主題，紫金配色，CSS variables
+    app.js            主邏輯（單檔，~700 行）
+    data.js           五星角色 / 光錐靜態資料（含圖片 ID 與簽名角色對應）
+    firebase.js       Firebase 初始化、Auth、Firestore CRUD、localStorage 備援
+    get_authkey.ps1   可選：PowerShell 腳本從遊戲快取抽 authkey
+  backend/
+    app.py            Flask 應用：/api/health, /api/validate, /api/import
+    requirements.txt
+    README.md
+
+  ── 領域知識 ───────────────────────────────────────────────
+  三個獨立卡池追蹤，各有獨立保底計數：
+    character  (角色活動池) — 90 大保底, 74 軟保底, 50% UP
+    light_cone (光錐活動池) — 80 大保底, 65 軟保底, 75% UP
+    standard   (常駐池)     — 90 大保底, 74 軟保底, 無 UP
+  只記錄五星（3/4 星不記）
+  關鍵概念：保底、軟保底、大保底、UP、歪、gachaId（HoYoLAB 唯一識別）
+  HoYoLAB API gacha_type：11=角色, 12=光錐, 1=常駐
+  authkey 約 24 小時失效；HSR 僅保留最近 6 個月抽卡歷史
+
+  ── 資料模型 ───────────────────────────────────────────────
+  Record：
+    { id, name, pullCount, isOff, upBanner, order, timestamp,
+      source: 'manual'|'import', gachaId?: string }
+  Pool state：
+    { pity, guaranteed, records: [Record] }
+  排序慣例：order=1 為最上方（最新）；新增預設插到最上方
+
+  ── 開發慣例 ───────────────────────────────────────────────
+  語言：所有 UI 文字、註解、commit message 使用繁體中文（zh-TW）
+  風格：簡單直接，避免過度抽象（學生程度可讀）
+  狀態管理：單一全域 state 物件，無 Redux/Zustand 之類
+  DOM 更新：innerHTML 全量重繪，事件每次重綁
+  錯誤處理：Firebase 錯誤經 classifyFirebaseError() 轉成中文訊息
+
+  ── 鎖定不可修改 ───────────────────────────────────────────
+  data.js 的 HSR_LIGHT_CONES 陣列（lines 77–137）的
+    name / char / type 欄位已由使用者手動校正完畢，禁止更動。
+    僅 id 欄位在必要時可調整。
+
+  ── authkey 取得策略 ──────────────────────────────────────
+  HSR 沒有原生「複製 URL」按鈕；HoYoLAB App 也看不到抽卡紀錄。
+  僅有的方法是從遊戲本機快取 data_2 讀取 URL。
+  方法 A：用內附 get_authkey.ps1（讀取快取，技術上違反 TOS 但無封號案例）
+  方法 B：純手動用 Notepad 開 data_2 搜 getGachaLog
+  不可使用任何注入遊戲進程、修改遊戲檔案、傳送資料到第三方伺服器的做法。
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-artifact rules
+# ──────────────────────────────────────────────────────────────────────────────
+rules:
+  proposal:
+    - 用繁體中文撰寫
+    - 控制在 300 字以內，避免冗長
+    - 必含「目的」「範圍」「Non-goals」三段
+    - 牽涉 data.js 光錐資料 name/char/type 欄位的變更一律拒絕（已鎖定）
+    - 牽涉 authkey 的功能必須說明風險與替代方案
+
+  tasks:
+    - 用繁體中文撰寫
+    - 單一 task 預估完成時間不超過 2 小時（大一學生可消化的粒度）
+    - 跨 frontend / backend 的整合 task 必須明確標註執行順序與相依關係
+    - 改 data.js 結構時需明確列出受影響的 app.js 函式
+
+  spec:
+    - 用繁體中文撰寫
+    - 變更現有 endpoint 必須提供向後相容說明，或標註為 breaking change
+    - 任何涉及外部 API（HoYoLAB / Firebase / Mar-7th CDN）的規格需註明依賴版本與失效情境
+    - 資料模型變更需附帶 migration 邏輯描述（參考 app.js 的 migrateOrCompactOrders）

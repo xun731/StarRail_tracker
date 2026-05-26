@@ -1,0 +1,22 @@
+# Render.com 部署設定（Blueprint）
+# 用法：在 Render 後台 → New + → Blueprint → 連 GitHub 後選此檔
+# 如果用 Render 介面手動建 Web Service 也可以，把下列設定填進去即可
+
+services:
+  - type: web
+    name: starrail-tracker-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 2 -b 0.0.0.0:$PORT app:app --timeout 120
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FLASK_DEBUG
+        value: "0"
+      # 部署完前端後，把這裡換成你的前端網址（例如 Netlify / Vercel / Pages）
+      # 多個來源用逗號分隔。不設則開放全部來源（開發階段方便，正式建議限定）
+      - key: ALLOWED_ORIGINS
+        value: "*"
