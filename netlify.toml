@@ -1,0 +1,22 @@
+# Netlify 部署設定
+# 把 frontend/ 子資料夾當成網站根目錄（裡面有 index.html）
+
+[build]
+  publish = "frontend"
+  # 沒有 build step（純靜態），不需要 command。
+  # Netlify 會把 frontend/ 整個資料夾直接當成站台根
+
+# 通用安全標頭（可選）
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# 確保 .ps1 下載時用 octet-stream（避免瀏覽器直接顯示原始碼）
+[[headers]]
+  for = "/*.ps1"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+    Content-Disposition = "attachment"
