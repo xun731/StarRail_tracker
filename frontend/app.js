@@ -118,6 +118,19 @@ function migrateOrCompactOrders() {
     }
     // 補上 source 欄位（舊資料一律視為 manual）
     records.forEach(r => { if (!r.source) r.source = 'manual'; });
+
+    // Migration：舊版 mergeImportedRecords 會把無 timestamp 的 Excel 紀錄填上
+    // createdAt ISO 字串（含 'T'），導致排序時被當成近期紀錄。
+    // 偵測：source='import' + 沒有 gachaId + timestamp 是 ISO 格式
+    //   → 視為當時被誤填的 Excel 紀錄，清空 timestamp 還原為「無時間」
+    records.forEach(r => {
+      if (r.source === 'import'
+          && !r.gachaId
+          && typeof r.timestamp === 'string'
+          && r.timestamp.includes('T')) {
+        r.timestamp = '';
+      }
+    });
   });
 }
 
@@ -1613,10 +1626,12 @@ $('import-confirm-btn').addEventListener('click', () => {
     return;
   }
 
-  // 決定插入模式：file 走使用者選擇、authkey 預設 timestamp 排序
+  // 決定插入模式：兩種來源都讀各自的 select
+  // authkey 預設 'top'（保留現有紀錄順序、不全池重排）
+  // file 預設 'bottom'（Excel 多半是舊紀錄）
   const insertMode = importPreviewSource === 'file'
     ? ($('file-insert-pos')?.value || 'bottom')
-    : 'timestamp';
+    : ($('authkey-insert-pos')?.value || 'top');
 
   const modeLabel = {
     top:       '插入到最上方（最新）',

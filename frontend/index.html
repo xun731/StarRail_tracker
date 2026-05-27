@@ -209,6 +209,18 @@
           <textarea id="import-url" class="import-url" rows="3"
             placeholder="貼上完整網址，例如：https://public-operation-hkrpg-sg.hoyoverse.com/...?authkey=..."></textarea>
         </div>
+        <div class="form-field">
+          <label>插入位置</label>
+          <select id="authkey-insert-pos" class="form-select">
+            <option value="top" selected>插入到最上方（最新，預設）</option>
+            <option value="bottom">插入到最下方（最舊）</option>
+            <option value="timestamp">依時間戳記與現有紀錄混排（會重排全池）</option>
+          </select>
+          <p class="info-note" style="margin-top:4px">
+            「混排」會把所有紀錄依 timestamp 重新排序 — 若你已用 Excel 補登過舊紀錄（無 timestamp），
+            它們可能會被排到尾端。建議維持「最上方」以保留現有順序。
+          </p>
+        </div>
         <button id="import-fetch-btn" class="btn-primary">獲取紀錄</button>
         <div id="import-status" class="import-status" style="display:none"></div>
 
