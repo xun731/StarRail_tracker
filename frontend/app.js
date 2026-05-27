@@ -1515,34 +1515,53 @@ $('import-confirm-btn').addEventListener('click', () => {
  *   - 既有紀錄 order 全體 += 新增筆數，相對順序不變（不修改手動內容）
  * @returns 實際新增筆數
  */
+/**
+ * 把 timestamp 字串轉成毫秒（用於排序）。
+ * 兼容 ISO 8601（手動紀錄）與 HoYoLAB 'YYYY-MM-DD HH:MM:SS'（匯入紀錄）。
+ * 失敗回 0。
+ */
+function parseTimestamp(ts) {
+  if (!ts) return 0;
+  const t = new Date(ts).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
 function mergeImportedRecords(poolName, importedItems) {
   const pool = state.pools[poolName];
-  const existingIds = new Set(pool.records.map(r => r.gachaId).filter(Boolean));
 
-  // 過濾掉重複的
-  const fresh = importedItems.filter(r => !r.gachaId || !existingIds.has(r.gachaId));
+  // 重複偵測：gachaId（精準）+ fingerprint（手動紀錄沒 gachaId 時的 fallback）
+  const existingIds = new Set(pool.records.map(r => r.gachaId).filter(Boolean));
+  const existingFps = new Set(pool.records.map(r => fingerprint(r)));
+
+  const fresh = importedItems.filter(r => {
+    const dupId = r.gachaId && existingIds.has(r.gachaId);
+    const dupFp = existingFps.has(fingerprint(r));
+    return !(dupId || dupFp);
+  });
   if (!fresh.length) return 0;
 
-  // 按 timestamp DESC 排序
-  fresh.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
-
-  // 既有紀錄 order 下移
-  pool.records.forEach(r => { r.order = (r.order ?? 0) + fresh.length; });
-
-  // 新紀錄掛到最上面 (#1..#N)
-  fresh.forEach((r, i) => {
+  // 全部塞進去（order 等下統一重排）
+  fresh.forEach(r => {
     pool.records.push({
       id:        newId(),
       name:      r.name,
       pullCount: r.pullCount,
       isOff:     !!r.isOff,
-      upBanner:  null,
+      upBanner:  r.upBanner || null,
       timestamp: r.timestamp || new Date().toISOString(),
-      gachaId:   r.gachaId,
+      gachaId:   r.gachaId || null,
       source:    'import',
-      order:     i + 1,
     });
   });
+
+  // 全部紀錄依 timestamp 由新到舊重排 → 重新指派 order
+  // Array.sort 在 ES2019+ 是穩定排序，同 timestamp 維持原相對順序
+  pool.records.sort((a, b) => {
+    const tb = parseTimestamp(b.timestamp);
+    const ta = parseTimestamp(a.timestamp);
+    return tb - ta;
+  });
+  pool.records.forEach((r, i) => { r.order = i + 1; });
 
   return fresh.length;
 }
