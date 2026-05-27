@@ -404,6 +404,62 @@ table.records-table tr:hover td { background: var(--surface2); }
   border-color: var(--accent);
   color: var(--accent-h);
 }
+#stats-batch-bar {
+  display: flex; gap: 8px; align-items: center;
+}
+.batch-count-display {
+  font-size: .85rem; color: var(--muted);
+}
+.batch-count-display strong { color: var(--accent-h); }
+.btn-ghost.batch-delete {
+  color: var(--red); border-color: rgba(231,76,60,.4);
+}
+.btn-ghost.batch-delete:hover:not(:disabled) {
+  background: rgba(231,76,60,.1); border-color: var(--red);
+}
+.btn-ghost.batch-delete:disabled { opacity: .35; cursor: not-allowed; }
+
+/* 編輯模式：bar item inline 輸入 + 拖曳手把 + checkbox */
+.bar-item.editable {
+  cursor: default;
+}
+.bar-item.editable.dragging { opacity: .4; }
+.bar-item.editable.drag-over {
+  border-top: 2px solid var(--accent);
+  margin-top: -1px;
+}
+.bar-drag {
+  cursor: grab;
+  font-size: 1rem; color: var(--muted);
+  padding: 0 4px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.bar-drag:active { cursor: grabbing; }
+.bar-cb {
+  width: 16px; height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer; flex-shrink: 0;
+}
+.bar-name-input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); padding: 4px 8px; font-size: .9rem; font-weight: 600;
+  width: 100%; margin-bottom: 5px;
+}
+.bar-name-input:focus { outline: none; border-color: var(--accent); }
+.bar-pull-input {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--gold); padding: 4px 6px; font-size: .85rem; font-weight: 700;
+  width: 56px; text-align: center;
+  flex-shrink: 0;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.bar-pull-input::-webkit-inner-spin-button,
+.bar-pull-input::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.bar-pull-input:focus { outline: none; border-color: var(--accent); }
 
 /* ── Info page ─────────────────────────────────────────── */
 .info-note { font-size: .85rem; color: var(--muted); margin-top: 6px; }

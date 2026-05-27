@@ -446,7 +446,54 @@ document.querySelectorAll('.tab').forEach(btn => {
 // 統計頁的「編輯模式」toggle
 $('stats-edit-toggle')?.addEventListener('click', () => {
   statsEditMode = !statsEditMode;
+  statsSelectedIds.clear();   // 切換時清空選取
   renderStats();
+});
+
+// 批量操作：全選 / 取消選 / 刪除所選
+$('batch-select-all')?.addEventListener('click', () => {
+  document.querySelectorAll('#tab-stats .bar-cb').forEach(cb => {
+    const key = `${cb.dataset.pool}:${cb.dataset.id}`;
+    statsSelectedIds.add(key);
+    cb.checked = true;
+  });
+  updateBatchCount();
+});
+$('batch-select-none')?.addEventListener('click', () => {
+  statsSelectedIds.clear();
+  document.querySelectorAll('#tab-stats .bar-cb').forEach(cb => { cb.checked = false; });
+  updateBatchCount();
+});
+$('batch-delete-btn')?.addEventListener('click', () => {
+  const count = statsSelectedIds.size;
+  if (!count) return;
+  openConfirm({
+    title: '批量刪除',
+    message:
+      `確定要刪除選中的 <strong>${count}</strong> 筆紀錄嗎？<br>` +
+      `<span style="color:var(--red)">此動作無法復原。</span>`,
+    okText: '確認刪除',
+    cancelText: '取消',
+    onOk: () => {
+      // 依 pool 分組
+      const byPool = {};
+      statsSelectedIds.forEach(key => {
+        const [pool, id] = key.split(':');
+        (byPool[pool] = byPool[pool] || new Set()).add(id);
+      });
+      // 各池過濾
+      Object.entries(byPool).forEach(([pool, ids]) => {
+        if (!state.pools[pool]) return;
+        state.pools[pool].records = state.pools[pool].records.filter(r => !ids.has(r.id));
+      });
+      statsSelectedIds.clear();
+      migrateOrCompactOrders();
+      recomputeAllGuaranteed();
+      persistData();
+      renderRecordList();
+      renderStats();
+    },
+  });
 });
 
 // ── 卡池切換 ──────────────────────────────────────────────────────────────────
@@ -938,19 +985,46 @@ function renderBarItem(r, pool, opts = {}) {
   const srcIcon = r.source === 'import'
     ? ' <span class="bar-source-icon" title="從遊戲匯入">📥</span>' : '';
 
-  // 編輯模式：在右側加 ▲▼ ✏️ ✕ 按鈕
-  const actions = editable ? `
-    <div class="bar-actions">
-      <button class="bar-act-btn" data-act="up"   data-id="${esc(r.id)}" data-pool="${pool}"
-        ${isFirst ? 'disabled' : ''} title="上移">▲</button>
-      <button class="bar-act-btn" data-act="down" data-id="${esc(r.id)}" data-pool="${pool}"
-        ${isLast  ? 'disabled' : ''} title="下移">▼</button>
-      <button class="bar-act-btn" data-act="edit" data-id="${esc(r.id)}" data-pool="${pool}"
-        title="編輯">✏️</button>
-      <button class="bar-act-btn act-del" data-act="del" data-id="${esc(r.id)}" data-pool="${pool}"
-        title="刪除">✕</button>
-    </div>` : '';
+  // ──────────────── 編輯模式：拖曳 + 勾選 + 內嵌輸入 + 動作鈕 ────────────────
+  if (editable) {
+    const checked = statsSelectedIds.has(`${pool}:${r.id}`) ? 'checked' : '';
+    return `
+      <div class="bar-item editable ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}"
+           draggable="true" data-id="${esc(r.id)}" data-pool="${pool}">
+        <span class="bar-drag" title="拖曳排序">⠿</span>
+        <input type="checkbox" class="bar-cb" data-id="${esc(r.id)}" data-pool="${pool}" ${checked} />
+        <div class="bar-order">#${r.order}</div>
+        <div class="bar-thumb">
+          ${imgUrl
+            ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
+                 onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
+            : esc(r.name[0] || '?')}
+        </div>
+        <div class="bar-content">
+          <input type="text" class="bar-name-input" data-id="${esc(r.id)}" data-pool="${pool}"
+                 value="${esc(r.name)}" placeholder="名稱" />
+          ${sub ? `<div class="bar-sub">${esc(sub)}</div>` : ''}
+          <div class="bar-track">
+            <div class="bar-fill ${color}" style="width:${pct}%"></div>
+          </div>
+        </div>
+        <input type="number" class="bar-pull-input" data-id="${esc(r.id)}" data-pool="${pool}"
+               value="${r.pullCount}" min="1" max="90" title="抽數" />
+        ${tag}
+        <div class="bar-actions">
+          <button class="bar-act-btn" data-act="up"   data-id="${esc(r.id)}" data-pool="${pool}"
+            ${isFirst ? 'disabled' : ''} title="上移">▲</button>
+          <button class="bar-act-btn" data-act="down" data-id="${esc(r.id)}" data-pool="${pool}"
+            ${isLast  ? 'disabled' : ''} title="下移">▼</button>
+          <button class="bar-act-btn" data-act="edit" data-id="${esc(r.id)}" data-pool="${pool}"
+            title="開完整編輯（歪 / UP 池等）">✏️</button>
+          <button class="bar-act-btn act-del" data-act="del" data-id="${esc(r.id)}" data-pool="${pool}"
+            title="刪除">✕</button>
+        </div>
+      </div>`;
+  }
 
+  // ──────────────── 非編輯模式：純檢視 ────────────────
   return `
     <div class="bar-item ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}">
       <div class="bar-order">#${r.order}</div>
@@ -969,12 +1043,16 @@ function renderBarItem(r, pool, opts = {}) {
       </div>
       <div class="bar-count">${r.pullCount} 抽</div>
       ${tag}
-      ${actions}
     </div>`;
 }
 
 // 統計頁的「編輯模式」開關 — 開啟後每筆 bar item 出現編輯按鈕
 let statsEditMode = false;
+// 編輯模式下勾選的紀錄（key = `${pool}:${id}`）
+const statsSelectedIds = new Set();
+// 拖曳中的紀錄
+let statsDragId = null;
+let statsDragPool = null;
 
 // ── 統計渲染 ──────────────────────────────────────────────────────────────────
 function renderStats() {
@@ -989,6 +1067,9 @@ function renderStats() {
     editToggle.textContent = statsEditMode ? '✓ 編輯模式（點此關閉）' : '✏️ 開啟編輯模式';
     editToggle.classList.toggle('active', statsEditMode);
   }
+  // 批量操作 bar 只在編輯模式顯示
+  const batchBar = $('stats-batch-bar');
+  if (batchBar) batchBar.style.display = statsEditMode ? 'flex' : 'none';
 
   renderPoolStats('character');
   renderPoolStats('light_cone');
@@ -996,7 +1077,7 @@ function renderStats() {
   renderPoolStats('collab_lc');
   renderPoolStats('standard');
 
-  // 編輯按鈕事件委派（所有 stats 頁面內的按鈕都用 closest 取得）
+  // ── 動作按鈕（▲▼ ✏️ ✕）────────────────────────────────────────────────────
   document.querySelectorAll('#tab-stats .bar-act-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const act  = btn.dataset.act;
@@ -1011,6 +1092,119 @@ function renderStats() {
       }
     });
   });
+
+  if (!statsEditMode) return;   // 以下功能只在編輯模式啟用
+
+  // ── 內嵌名稱輸入 ───────────────────────────────────────────────────────────
+  document.querySelectorAll('#tab-stats .bar-name-input').forEach(input => {
+    let original = input.value;
+    input.addEventListener('focus', () => { original = input.value; });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') input.blur();
+      if (e.key === 'Escape') { input.value = original; input.blur(); }
+    });
+    input.addEventListener('blur', () => {
+      const newName = input.value.trim();
+      const id   = input.dataset.id;
+      const pool = input.dataset.pool;
+      const rec  = state.pools[pool]?.records.find(r => r.id === id);
+      if (!rec) return;
+      if (!newName) { input.value = rec.name; return; }   // 空字串不允許
+      if (newName === rec.name) return;                    // 沒變化
+      rec.name = newName;
+      persistData();
+      renderRecordList();
+      renderStats();   // 重 render 以更新圖片等
+    });
+  });
+
+  // ── 內嵌抽數輸入 ───────────────────────────────────────────────────────────
+  document.querySelectorAll('#tab-stats .bar-pull-input').forEach(input => {
+    let original = input.value;
+    input.addEventListener('focus', () => { original = input.value; });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') input.blur();
+      if (e.key === 'Escape') { input.value = original; input.blur(); }
+    });
+    input.addEventListener('blur', () => {
+      const v    = parseInt(input.value, 10);
+      const id   = input.dataset.id;
+      const pool = input.dataset.pool;
+      const rec  = state.pools[pool]?.records.find(r => r.id === id);
+      if (!rec) return;
+      if (!Number.isFinite(v) || v < 1 || v > 90) { input.value = rec.pullCount; return; }
+      if (v === rec.pullCount) return;
+      rec.pullCount = v;
+      persistData();
+      renderRecordList();
+      renderStats();   // 重 render 以更新進度條長度/顏色
+    });
+  });
+
+  // ── checkbox 勾選 ─────────────────────────────────────────────────────────
+  document.querySelectorAll('#tab-stats .bar-cb').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = `${cb.dataset.pool}:${cb.dataset.id}`;
+      if (cb.checked) statsSelectedIds.add(key);
+      else statsSelectedIds.delete(key);
+      updateBatchCount();
+    });
+  });
+  updateBatchCount();
+
+  // ── 拖曳排序 ──────────────────────────────────────────────────────────────
+  document.querySelectorAll('#tab-stats .bar-item.editable').forEach(item => {
+    item.addEventListener('dragstart', e => {
+      statsDragId   = item.dataset.id;
+      statsDragPool = item.dataset.pool;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      document.querySelectorAll('#tab-stats .bar-item').forEach(i =>
+        i.classList.remove('drag-over'));
+      statsDragId = null;
+      statsDragPool = null;
+    });
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // 只在同一池內 highlight
+      if (item.dataset.pool === statsDragPool && item.dataset.id !== statsDragId) {
+        document.querySelectorAll('#tab-stats .bar-item').forEach(i =>
+          i.classList.remove('drag-over'));
+        item.classList.add('drag-over');
+      }
+    });
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!statsDragId) return;
+      if (item.dataset.pool !== statsDragPool) return;   // 不允許跨池
+      if (item.dataset.id === statsDragId) return;
+
+      const pool = state.pools[item.dataset.pool];
+      const ordered = orderedRecords(pool.records);
+      const srcIdx = ordered.findIndex(r => r.id === statsDragId);
+      const tgtIdx = ordered.findIndex(r => r.id === item.dataset.id);
+      if (srcIdx < 0 || tgtIdx < 0) return;
+      const [moved] = ordered.splice(srcIdx, 1);
+      ordered.splice(tgtIdx, 0, moved);
+      ordered.forEach((r, i) => { r.order = i + 1; });
+
+      recomputeAllGuaranteed();
+      persistData();
+      renderRecordList();
+      renderStats();
+    });
+  });
+}
+
+/** 更新批量操作 bar 的計數 + delete 按鈕 disabled 狀態 */
+function updateBatchCount() {
+  const count = statsSelectedIds.size;
+  $('batch-count').textContent = count;
+  $('batch-delete-btn').disabled = count === 0;
 }
 
 function renderPoolStats(pool) {
