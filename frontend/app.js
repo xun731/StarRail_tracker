@@ -446,7 +446,9 @@ document.querySelectorAll('.tab').forEach(btn => {
 // 統計頁的「編輯模式」toggle
 $('stats-edit-toggle')?.addEventListener('click', () => {
   statsEditMode = !statsEditMode;
-  statsSelectedIds.clear();   // 切換時清空選取
+  statsSelectedIds.clear();         // 切換時清空選取
+  statsMovePickerActive = false;    // 也退出 picker 模式
+  statsMovePickerPool   = null;
   renderStats();
 });
 
@@ -464,6 +466,25 @@ $('batch-select-none')?.addEventListener('click', () => {
   document.querySelectorAll('#tab-stats .bar-cb').forEach(cb => { cb.checked = false; });
   updateBatchCount();
 });
+$('batch-move-btn')?.addEventListener('click', () => {
+  if (statsSelectedIds.size === 0) return;
+  // 檢查是否全部在同一池
+  const pools = new Set([...statsSelectedIds].map(k => k.split(':')[0]));
+  if (pools.size > 1) {
+    showSync('error', '批量移動只支援同一池內的紀錄，請只勾選同一池');
+    return;
+  }
+  statsMovePickerActive = true;
+  statsMovePickerPool   = [...pools][0];
+  renderStats();
+});
+
+$('picker-cancel')?.addEventListener('click', () => {
+  statsMovePickerActive = false;
+  statsMovePickerPool   = null;
+  renderStats();
+});
+
 $('batch-delete-btn')?.addEventListener('click', () => {
   const count = statsSelectedIds.size;
   if (!count) return;
@@ -971,7 +992,7 @@ function barColorClass(pullCount, limit) {
 }
 
 function renderBarItem(r, pool, opts = {}) {
-  const { editable = false, isFirst = false, isLast = false } = opts;
+  const { editable = false, isFirst = false, isLast = false, pickerState = '' } = opts;
   const limit  = POOL_LIMIT[pool];
   const pct    = Math.min(r.pullCount / limit * 100, 100).toFixed(1);
   const color  = barColorClass(r.pullCount, limit);
@@ -984,6 +1005,31 @@ function renderBarItem(r, pool, opts = {}) {
 
   const srcIcon = r.source === 'import'
     ? ' <span class="bar-source-icon" title="從遊戲匯入">📥</span>' : '';
+
+  // ──────────────── Picker 模式：點擊選目標 ────────────────
+  // pickerState = 'pickable' (可點選為目標) / 'moving' (被選中、要被移動) / 'dimmed' (其他池)
+  if (pickerState) {
+    return `
+      <div class="bar-item ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''} ${pickerState}"
+           data-id="${esc(r.id)}" data-pool="${pool}">
+        <div class="bar-order">#${r.order}</div>
+        <div class="bar-thumb">
+          ${imgUrl
+            ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
+                 onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
+            : esc(r.name[0] || '?')}
+        </div>
+        <div class="bar-content">
+          <div class="bar-name">${esc(r.name)}${srcIcon}</div>
+          ${sub ? `<div class="bar-sub">${esc(sub)}</div>` : ''}
+          <div class="bar-track">
+            <div class="bar-fill ${color}" style="width:${pct}%"></div>
+          </div>
+        </div>
+        <div class="bar-count">${r.pullCount} 抽</div>
+        ${tag}
+      </div>`;
+  }
 
   // ──────────────── 編輯模式：拖曳 + 勾選 + 內嵌輸入 + 動作鈕 ────────────────
   if (editable) {
@@ -1053,6 +1099,82 @@ const statsSelectedIds = new Set();
 // 拖曳中的紀錄
 let statsDragId = null;
 let statsDragPool = null;
+// 批量移動 picker 模式
+let statsMovePickerActive = false;
+let statsMovePickerPool   = null;
+
+// ── 浮動 autocomplete（給統計頁 inline name input 用） ─────────────────────
+function attachNameAutocomplete(input) {
+  const pool = input.dataset.pool;
+  const items = getAutoCompleteItems(pool);
+  const list = $('floating-ac-list');
+  let idx = -1;
+
+  function show(matches) {
+    list.innerHTML = matches
+      .map(m => `<li data-value="${esc(m.value)}">${esc(m.display)}</li>`)
+      .join('');
+    const rect = input.getBoundingClientRect();
+    list.style.left   = `${rect.left + window.scrollX}px`;
+    list.style.top    = `${rect.bottom + window.scrollY + 2}px`;
+    list.style.width  = `${rect.width}px`;
+    list.style.display = '';
+    idx = -1;
+    list.querySelectorAll('li').forEach(li => {
+      li.addEventListener('mousedown', e => {
+        e.preventDefault();   // 防止 input 立即失焦
+        input.value = li.dataset.value;
+        hide();
+        // 用 rAF 等下一幀再 blur，確保 value 已套上
+        requestAnimationFrame(() => input.blur());
+      });
+    });
+  }
+  function hide() {
+    list.style.display = 'none';
+    idx = -1;
+  }
+  function highlight() {
+    list.querySelectorAll('li').forEach((li, i) =>
+      li.classList.toggle('active', i === idx));
+    if (idx >= 0) list.children[idx]?.scrollIntoView({ block: 'nearest' });
+  }
+
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (!q) { hide(); return; }
+    const matches = fuzzySearch(q, items);
+    if (matches.length) show(matches);
+    else hide();
+  });
+  input.addEventListener('focus', () => {
+    const q = input.value.trim();
+    if (q) {
+      const matches = fuzzySearch(q, items);
+      if (matches.length) show(matches);
+    }
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(hide, 150);   // 給 li mousedown 緩衝
+  });
+  input.addEventListener('keydown', e => {
+    const lis = list.querySelectorAll('li');
+    if (e.key === 'ArrowDown' && lis.length) {
+      e.preventDefault();
+      idx = (idx + 1) % lis.length;
+      highlight();
+    } else if (e.key === 'ArrowUp' && lis.length) {
+      e.preventDefault();
+      idx = (idx - 1 + lis.length) % lis.length;
+      highlight();
+    } else if (e.key === 'Enter' && idx >= 0 && lis[idx]) {
+      e.preventDefault();
+      input.value = lis[idx].dataset.value;
+      hide();
+      input.blur();
+    }
+  });
+}
 
 // ── 統計渲染 ──────────────────────────────────────────────────────────────────
 function renderStats() {
@@ -1067,9 +1189,15 @@ function renderStats() {
     editToggle.textContent = statsEditMode ? '✓ 編輯模式（點此關閉）' : '✏️ 開啟編輯模式';
     editToggle.classList.toggle('active', statsEditMode);
   }
-  // 批量操作 bar 只在編輯模式顯示
+  // 批量操作 bar：只在編輯模式且未在 picker 模式時顯示
   const batchBar = $('stats-batch-bar');
-  if (batchBar) batchBar.style.display = statsEditMode ? 'flex' : 'none';
+  if (batchBar) batchBar.style.display = (statsEditMode && !statsMovePickerActive) ? 'flex' : 'none';
+  // Picker banner：只在 picker 模式顯示
+  const pickerBanner = $('stats-picker-banner');
+  if (pickerBanner) {
+    pickerBanner.style.display = statsMovePickerActive ? 'flex' : 'none';
+    if (statsMovePickerActive) $('picker-count').textContent = statsSelectedIds.size;
+  }
 
   renderPoolStats('character');
   renderPoolStats('light_cone');
@@ -1100,7 +1228,8 @@ function renderStats() {
     let original = input.value;
     input.addEventListener('focus', () => { original = input.value; });
     input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') input.blur();
+      // 注意：autocomplete 也綁 keydown 處理 ArrowDown/Up/Enter
+      // 這裡只處理 Escape（autocomplete 不處理）
       if (e.key === 'Escape') { input.value = original; input.blur(); }
     });
     input.addEventListener('blur', () => {
@@ -1116,6 +1245,8 @@ function renderStats() {
       renderRecordList();
       renderStats();   // 重 render 以更新圖片等
     });
+    // 掛 autocomplete
+    attachNameAutocomplete(input);
   });
 
   // ── 內嵌抽數輸入 ───────────────────────────────────────────────────────────
@@ -1198,13 +1329,63 @@ function renderStats() {
       renderStats();
     });
   });
+
+  // ── Picker 模式：點 pickable bar 執行批量移動 ─────────────────────────────
+  if (statsMovePickerActive) {
+    document.querySelectorAll('#tab-stats .bar-item.pickable').forEach(item => {
+      item.addEventListener('click', () => {
+        executeBatchMove(item.dataset.pool, item.dataset.id);
+      });
+    });
+  }
 }
 
-/** 更新批量操作 bar 的計數 + delete 按鈕 disabled 狀態 */
+/** 更新批量操作 bar 的計數 + 按鈕 disabled 狀態 */
 function updateBatchCount() {
   const count = statsSelectedIds.size;
   $('batch-count').textContent = count;
   $('batch-delete-btn').disabled = count === 0;
+  $('batch-move-btn').disabled   = count === 0;
+}
+
+/** 把選中的紀錄一次性移動到指定目標的「之後」位置 */
+function executeBatchMove(targetPool, targetId) {
+  const pool = state.pools[targetPool];
+  if (!pool) return;
+
+  // 只取「目標池」內的選中 id
+  const selectedIdsInPool = new Set(
+    [...statsSelectedIds]
+      .filter(k => k.startsWith(`${targetPool}:`))
+      .map(k => k.split(':')[1])
+  );
+  if (!selectedIdsInPool.size) return;
+  if (selectedIdsInPool.has(targetId)) return;   // 目標不能是自己
+
+  const ordered   = orderedRecords(pool.records);
+  const moving    = ordered.filter(r => selectedIdsInPool.has(r.id));
+  const remainder = ordered.filter(r => !selectedIdsInPool.has(r.id));
+
+  const targetIdx = remainder.findIndex(r => r.id === targetId);
+  if (targetIdx < 0) return;
+
+  // 在 remainder 中目標之後插入 moving 整批
+  const merged = [
+    ...remainder.slice(0, targetIdx + 1),
+    ...moving,                                // 保留 moving 內部相對順序
+    ...remainder.slice(targetIdx + 1),
+  ];
+  merged.forEach((r, i) => { r.order = i + 1; });
+
+  // 清狀態、退出 picker 模式
+  statsMovePickerActive = false;
+  statsMovePickerPool   = null;
+  statsSelectedIds.clear();
+
+  recomputeAllGuaranteed();
+  persistData();
+  renderRecordList();
+  renderStats();
 }
 
 function renderPoolStats(pool) {
@@ -1264,11 +1445,21 @@ function renderPoolStats(pool) {
     </div>`;
 
   const ordered = orderedRecords(records);
-  const barsHtml = ordered.map((r, i) => renderBarItem(r, pool, {
-    editable: statsEditMode,
-    isFirst:  i === 0,
-    isLast:   i === ordered.length - 1,
-  })).join('');
+  const barsHtml = ordered.map((r, i) => {
+    let pickerState = '';
+    if (statsMovePickerActive) {
+      const key = `${pool}:${r.id}`;
+      if (statsSelectedIds.has(key)) pickerState = 'moving';
+      else if (pool === statsMovePickerPool) pickerState = 'pickable';
+      else pickerState = 'dimmed';
+    }
+    return renderBarItem(r, pool, {
+      editable: statsEditMode && !statsMovePickerActive,   // picker 中暫停 editable UI
+      isFirst:  i === 0,
+      isLast:   i === ordered.length - 1,
+      pickerState,
+    });
+  }).join('');
   wrap.innerHTML = pityHtml + barsHtml;
 }
 

@@ -461,6 +461,53 @@ table.records-table tr:hover td { background: var(--surface2); }
 }
 .bar-pull-input:focus { outline: none; border-color: var(--accent); }
 
+/* 浮動 autocomplete（給 inline 編輯使用） */
+.autocomplete-list.floating-ac {
+  position: absolute; z-index: 1500;
+  max-height: 240px; overflow-y: auto;
+}
+
+/* 批量移動 picker banner */
+.picker-banner {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 14px; padding: 12px 16px;
+  background: rgba(124,92,191,.18);
+  border: 1px solid var(--accent); border-radius: var(--radius);
+  color: var(--accent-h);
+  font-size: .9rem;
+}
+.picker-banner strong { color: #fff; font-weight: 700; }
+
+/* 批量移動按鈕 */
+.btn-ghost.batch-move {
+  color: var(--accent-h); border-color: rgba(124,92,191,.4);
+}
+.btn-ghost.batch-move:hover:not(:disabled) {
+  background: rgba(124,92,191,.12); border-color: var(--accent);
+}
+.btn-ghost.batch-move:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Picker 模式：bar item 的三種狀態 */
+.bar-item.pickable {
+  cursor: pointer;
+  transition: all .15s;
+}
+.bar-item.pickable:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124,92,191,.3);
+  transform: translateX(4px);
+}
+.bar-item.moving {
+  background: rgba(124,92,191,.18);
+  border-left: 3px solid var(--accent);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+.bar-item.dimmed {
+  opacity: .35;
+  pointer-events: none;
+}
+
 /* ── Info page ─────────────────────────────────────────── */
 .info-note { font-size: .85rem; color: var(--muted); margin-top: 6px; }
 .info-pool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 14px; }

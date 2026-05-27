@@ -339,8 +339,13 @@
           <button id="batch-select-all" class="btn-ghost" type="button">☑ 全選</button>
           <button id="batch-select-none" class="btn-ghost" type="button">☐ 取消</button>
           <span class="batch-count-display">已選 <strong id="batch-count">0</strong> 筆</span>
+          <button id="batch-move-btn" class="btn-ghost batch-move" type="button" disabled>↕ 批量移動</button>
           <button id="batch-delete-btn" class="btn-ghost batch-delete" type="button" disabled>🗑 刪除所選</button>
         </div>
+      </div>
+      <div id="stats-picker-banner" class="picker-banner" style="display:none">
+        <span>📍 點擊目標紀錄，將選中的 <strong id="picker-count">0</strong> 筆移動到該筆「之後」</span>
+        <button id="picker-cancel" class="btn-ghost" type="button" style="margin-left:auto">取消</button>
       </div>
       <div id="stats-content" style="display:none">
 
@@ -547,6 +552,9 @@
     </footer>
 
   </div><!-- /container -->
+
+  <!-- 浮動 autocomplete（給統計頁 inline 編輯用，body 級別避免被 overflow 切掉） -->
+  <ul id="floating-ac-list" class="autocomplete-list floating-ac" style="display:none"></ul>
 
   <!-- ═══ 確認對話框 ═══ -->
   <div id="confirm-modal" class="modal-overlay" style="display:none">
