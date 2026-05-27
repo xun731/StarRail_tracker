@@ -1346,7 +1346,7 @@ $('import-fetch-btn').addEventListener('click', async () => {
     return;
   }
 
-  setImportStatus('loading', '⏳ 連線後端中…首次匯入需 10–60 秒（要分頁拉 6 個月歷史）');
+  setImportStatus('loading', '⏳ 連線後端中…匯入需 10–60 秒（要分頁拉 6 個月歷史）');
   $('import-preview').style.display = 'none';
   importPreviewData = null;
 
@@ -1377,7 +1377,7 @@ $('import-fetch-btn').addEventListener('click', async () => {
   } catch (err) {
     let msg = err.message || String(err);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      msg = '無法連線後端伺服器，請稍後再試。';
+      msg = '無法連線後端伺服器，請稍後再試。(如果是第一次嘗試，建議30秒後再試一次)';
     }
     setImportStatus('error', `❌ ${msg}`);
   }
