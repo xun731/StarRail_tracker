@@ -1735,14 +1735,45 @@ function fillMappingDropdowns(headers) {
   autoMapField('map-pool',     headers, ['卡池', 'pool', 'gacha_type', 'banner']);
 }
 
+/** 從已 parse 的 workbook 取出指定分頁的列資料，更新 fileParsedRows / Headers */
+function loadXlsxSheet(sheetName) {
+  if (!parsedWorkbook) return;
+  const sheet = parsedWorkbook.Sheets[sheetName];
+  fileParsedRows = window.XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  fileParsedHeaders = fileParsedRows.length ? Object.keys(fileParsedRows[0]) : [];
+}
+
+/** 更新分頁切換器（多分頁才顯示） */
+function fillSheetSelector(sheetNames, currentSheet) {
+  const sel = $('map-sheet');
+  const row = $('sheet-selector-row');
+  if (!sel || !row) return;
+  sel.innerHTML = sheetNames
+    .map(n => `<option value="${esc(n)}">${esc(n)}</option>`)
+    .join('');
+  sel.value = currentSheet;
+  row.style.display = sheetNames.length > 1 ? '' : 'none';
+}
+
+/** 更新讀檔狀態文字（含分頁名稱） */
+function updateFileRowcount(sheetName) {
+  const desc = sheetName
+    ? `分頁「${sheetName}」共 ${fileParsedRows.length} 列、${fileParsedHeaders.length} 個欄位`
+    : `共讀到 ${fileParsedRows.length} 列、${fileParsedHeaders.length} 個欄位`;
+  $('import-file-rowcount').textContent = `${desc}。請對應下列欄位後按「預覽匯入紀錄」。`;
+}
+
 async function onFileChosen(file) {
   setFileStatus('loading', '⏳ 解析檔案中…');
   $('import-file-mapping').style.display = 'none';
+  $('sheet-selector-row').style.display = 'none';
   fileParsedRows = null;
   fileParsedHeaders = [];
+  parsedWorkbook = null;
 
   const ext = file.name.toLowerCase().split('.').pop();
   try {
+    let sheetName = null;
     if (ext === 'csv') {
       await loadScriptOnce(PAPAPARSE_CDN);
       const text = await file.text();
@@ -1753,12 +1784,12 @@ async function onFileChosen(file) {
     } else if (ext === 'xlsx' || ext === 'xls') {
       await loadScriptOnce(XLSX_CDN);
       const buf = await file.arrayBuffer();
-      const wb = window.XLSX.read(buf, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      fileParsedRows = window.XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      fileParsedHeaders = fileParsedRows.length
-        ? Object.keys(fileParsedRows[0])
-        : [];
+      parsedWorkbook = window.XLSX.read(buf, { type: 'array' });
+      const sheets = parsedWorkbook.SheetNames || [];
+      if (!sheets.length) throw new Error('Excel 內找不到任何分頁');
+      sheetName = sheets[0];   // 預設第一頁
+      loadXlsxSheet(sheetName);
+      fillSheetSelector(sheets, sheetName);
     } else {
       throw new Error('不支援的檔案格式（請選 .csv / .xlsx / .xls）');
     }
@@ -1766,14 +1797,31 @@ async function onFileChosen(file) {
     if (!fileParsedRows?.length) throw new Error('檔案內容為空');
 
     fillMappingDropdowns(fileParsedHeaders);
-    $('import-file-rowcount').textContent =
-      `共讀到 ${fileParsedRows.length} 列、${fileParsedHeaders.length} 個欄位。請對應下列欄位後按「預覽匯入紀錄」。`;
+    updateFileRowcount(sheetName);
     $('import-file-mapping').style.display = '';
-    setFileStatus('success', `✅ 已讀取 ${file.name}`);
+
+    const sheetsHint = (parsedWorkbook?.SheetNames?.length > 1)
+      ? `（共 ${parsedWorkbook.SheetNames.length} 個分頁，預設第一頁；可在下方切換）`
+      : '';
+    setFileStatus('success', `✅ 已讀取 ${file.name}${sheetsHint}`);
   } catch (err) {
     setFileStatus('error', `❌ ${err.message || err}`);
   }
 }
+
+// 切換分頁：重新 parse 那個分頁 + 重建欄位對應下拉
+$('map-sheet')?.addEventListener('change', () => {
+  if (!parsedWorkbook) return;
+  const sheetName = $('map-sheet').value;
+  loadXlsxSheet(sheetName);
+  if (!fileParsedRows?.length) {
+    setFileStatus('error', `⚠ 分頁「${sheetName}」是空的`);
+    return;
+  }
+  fillMappingDropdowns(fileParsedHeaders);
+  updateFileRowcount(sheetName);
+  setFileStatus('success', `✅ 已切換到分頁「${sheetName}」`);
+});
 
 $('import-file-input').addEventListener('change', e => {
   const file = e.target.files?.[0];
