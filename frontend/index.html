@@ -253,6 +253,16 @@
 
         <div id="import-file-mapping" class="file-mapping" style="display:none">
           <h3 class="sub-section">📌 欄位對應</h3>
+
+          <!-- 分頁選擇器（只在多分頁 xlsx 時顯示） -->
+          <div class="form-field" id="sheet-selector-row" style="display:none">
+            <label>選擇分頁 <span style="color:var(--accent-h)">（多分頁 Excel）</span></label>
+            <select id="map-sheet" class="form-select"></select>
+            <p class="info-note" style="margin-top:4px">
+              切換分頁時，下方的欄位對應會自動重新偵測。
+            </p>
+          </div>
+
           <p class="info-note" id="import-file-rowcount" style="margin-bottom:10px"></p>
 
           <div class="form-field">

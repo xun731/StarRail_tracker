@@ -1666,6 +1666,7 @@ const XLSX_CDN      = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.m
 const FIELD_MAP_IDS = ['map-name', 'map-pull', 'map-isoff', 'map-upbanner', 'map-time', 'map-pool'];
 
 let fileParsedRows = null;
+let parsedWorkbook = null;   // XLSX workbook 物件（保留以便切換分頁時用）
 let fileParsedHeaders = [];
 
 function loadScriptOnce(src) {
