@@ -374,6 +374,37 @@ table.records-table tr:hover td { background: var(--surface2); }
 .bar-tag.up  { background: rgba(46,204,113,.15); color: var(--green); border: 1px solid var(--green); }
 .bar-tag.off { background: rgba(231,76,60,.15);  color: var(--red);   border: 1px solid var(--red);  }
 
+/* 編輯模式：bar item 右側的動作按鈕 */
+.bar-actions {
+  display: flex; gap: 2px; flex-shrink: 0;
+  margin-left: 4px; padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+.bar-act-btn {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); cursor: pointer;
+  width: 24px; height: 24px; padding: 0;
+  font-size: .8rem; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s;
+}
+.bar-act-btn:hover:not(:disabled) { color: var(--accent-h); border-color: var(--accent); }
+.bar-act-btn:disabled { opacity: .25; cursor: not-allowed; }
+.bar-act-btn.act-del:hover { color: var(--red); border-color: var(--red); }
+
+/* 統計頁頂部 toolbar */
+.stats-toolbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 14px; padding: 10px 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+#stats-edit-toggle.active {
+  background: rgba(124,92,191,.15);
+  border-color: var(--accent);
+  color: var(--accent-h);
+}
+
 /* ── Info page ─────────────────────────────────────────── */
 .info-note { font-size: .85rem; color: var(--muted); margin-top: 6px; }
 .info-pool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-bottom: 14px; }

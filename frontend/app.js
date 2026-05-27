@@ -430,6 +430,12 @@ document.querySelectorAll('.tab').forEach(btn => {
   });
 });
 
+// 統計頁的「編輯模式」toggle
+$('stats-edit-toggle')?.addEventListener('click', () => {
+  statsEditMode = !statsEditMode;
+  renderStats();
+});
+
 // ── 卡池切換 ──────────────────────────────────────────────────────────────────
 document.querySelectorAll('.pool-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -704,19 +710,20 @@ function addRecord() {
 }
 
 // ── 編輯紀錄 ──────────────────────────────────────────────────────────────────
-function openEditModal(recordId) {
-  const pool = state.pools[state.activePool];
-  const rec  = pool.records.find(r => r.id === recordId);
+function openEditModal(recordId, poolName = state.activePool) {
+  const pool = state.pools[poolName];
+  const rec  = pool?.records.find(r => r.id === recordId);
   if (!rec) return;
 
-  state.editingId = recordId;
-  $('edit-modal-order').textContent = `#${rec.order}`;
+  state.editingId   = recordId;
+  state.editingPool = poolName;   // 記住改的是哪個池
+  $('edit-modal-order').textContent = `#${rec.order}  ·  ${poolName}`;
   editNameInput.value = rec.name;
   editNameInput.style.borderColor = '';
   $('edit-pull-count-input').value = rec.pullCount;
   $('edit-pull-count-input').style.borderColor = '';
 
-  const showOff = POOL_HAS_UP[state.activePool];
+  const showOff = POOL_HAS_UP[poolName];
   $('edit-is-off-row').style.display = showOff ? '' : 'none';
   $('edit-is-off').checked = !!rec.isOff;
   $('edit-up-banner-row').style.display = (showOff && rec.isOff) ? '' : 'none';
@@ -727,20 +734,22 @@ function openEditModal(recordId) {
 
 function closeEditModal() {
   state.editingId = null;
+  state.editingPool = null;
   $('edit-modal').style.display = 'none';
 }
 
 function saveEdit() {
   const id = state.editingId;
+  const poolName = state.editingPool || state.activePool;
   if (!id) return;
 
-  const pool = state.pools[state.activePool];
-  const rec  = pool.records.find(r => r.id === id);
+  const pool = state.pools[poolName];
+  const rec  = pool?.records.find(r => r.id === id);
   if (!rec) { closeEditModal(); return; }
 
   const name      = editNameInput.value.trim();
   const pullCount = parseInt($('edit-pull-count-input').value);
-  const isOff     = POOL_HAS_UP[state.activePool] ? $('edit-is-off').checked : false;
+  const isOff     = POOL_HAS_UP[poolName] ? $('edit-is-off').checked : false;
   const upBanner  = isOff ? (editUpInput.value.trim() || null) : null;
 
   if (!name) {
@@ -758,11 +767,18 @@ function saveEdit() {
   rec.upBanner  = upBanner;
 
   recomputeAllGuaranteed();
-  $('guaranteed').checked = pool.guaranteed;
+  // 若改的是現在 active pool，同步 guaranteed 顯示
+  if (poolName === state.activePool) {
+    $('guaranteed').checked = pool.guaranteed;
+  }
 
   closeEditModal();
   persistData();
   renderRecordList();
+  // 若統計頁開著，也要 refresh
+  if (document.querySelector('.tab[data-tab="stats"]')?.classList.contains('active')) {
+    renderStats();
+  }
 }
 
 // Modal 事件
@@ -894,7 +910,8 @@ function barColorClass(pullCount, limit) {
   return 'bar-red';
 }
 
-function renderBarItem(r, pool) {
+function renderBarItem(r, pool, opts = {}) {
+  const { editable = false, isFirst = false, isLast = false } = opts;
   const limit  = POOL_LIMIT[pool];
   const pct    = Math.min(r.pullCount / limit * 100, 100).toFixed(1);
   const color  = barColorClass(r.pullCount, limit);
@@ -907,6 +924,19 @@ function renderBarItem(r, pool) {
 
   const srcIcon = r.source === 'import'
     ? ' <span class="bar-source-icon" title="從遊戲匯入">📥</span>' : '';
+
+  // 編輯模式：在右側加 ▲▼ ✏️ ✕ 按鈕
+  const actions = editable ? `
+    <div class="bar-actions">
+      <button class="bar-act-btn" data-act="up"   data-id="${esc(r.id)}" data-pool="${pool}"
+        ${isFirst ? 'disabled' : ''} title="上移">▲</button>
+      <button class="bar-act-btn" data-act="down" data-id="${esc(r.id)}" data-pool="${pool}"
+        ${isLast  ? 'disabled' : ''} title="下移">▼</button>
+      <button class="bar-act-btn" data-act="edit" data-id="${esc(r.id)}" data-pool="${pool}"
+        title="編輯">✏️</button>
+      <button class="bar-act-btn act-del" data-act="del" data-id="${esc(r.id)}" data-pool="${pool}"
+        title="刪除">✕</button>
+    </div>` : '';
 
   return `
     <div class="bar-item ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}">
@@ -926,8 +956,12 @@ function renderBarItem(r, pool) {
       </div>
       <div class="bar-count">${r.pullCount} 抽</div>
       ${tag}
+      ${actions}
     </div>`;
 }
+
+// 統計頁的「編輯模式」開關 — 開啟後每筆 bar item 出現編輯按鈕
+let statsEditMode = false;
 
 // ── 統計渲染 ──────────────────────────────────────────────────────────────────
 function renderStats() {
@@ -935,11 +969,35 @@ function renderStats() {
   $('stats-empty-hint').style.display = hasAny ? 'none' : '';
   $('stats-content').style.display    = hasAny ? '' : 'none';
   if (!hasAny) return;
+
+  // 更新編輯模式 toggle 按鈕的視覺
+  const editToggle = $('stats-edit-toggle');
+  if (editToggle) {
+    editToggle.textContent = statsEditMode ? '✓ 編輯模式（點此關閉）' : '✏️ 開啟編輯模式';
+    editToggle.classList.toggle('active', statsEditMode);
+  }
+
   renderPoolStats('character');
   renderPoolStats('light_cone');
   renderPoolStats('collab_char');
   renderPoolStats('collab_lc');
   renderPoolStats('standard');
+
+  // 編輯按鈕事件委派（所有 stats 頁面內的按鈕都用 closest 取得）
+  document.querySelectorAll('#tab-stats .bar-act-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const act  = btn.dataset.act;
+      const id   = btn.dataset.id;
+      const pool = btn.dataset.pool;
+      if (act === 'up' || act === 'down') {
+        moveRecord(id, act, pool);
+      } else if (act === 'edit') {
+        openEditModal(id, pool);
+      } else if (act === 'del') {
+        deleteRecordFromStats(id, pool);
+      }
+    });
+  });
 }
 
 function renderPoolStats(pool) {
@@ -998,13 +1056,19 @@ function renderPoolStats(pool) {
       已墊 <strong>${p.pity}</strong> 抽（目前保底）
     </div>`;
 
-  const barsHtml = orderedRecords(records).map(r => renderBarItem(r, pool)).join('');
+  const ordered = orderedRecords(records);
+  const barsHtml = ordered.map((r, i) => renderBarItem(r, pool, {
+    editable: statsEditMode,
+    isFirst:  i === 0,
+    isLast:   i === ordered.length - 1,
+  })).join('');
   wrap.innerHTML = pityHtml + barsHtml;
 }
 
 // ── 上下移動（觸控友善的排序替代方案） ───────────────────────────────────────
-function moveRecord(id, dir) {
-  const pool  = state.pools[state.activePool];
+function moveRecord(id, dir, poolName = state.activePool) {
+  const pool  = state.pools[poolName];
+  if (!pool) return;
   const items = orderedRecords(pool.records);
   const idx   = items.findIndex(r => r.id === id);
   if (idx < 0) return;
@@ -1016,9 +1080,37 @@ function moveRecord(id, dir) {
   items[idx].order      = o2;
   items[swapWith].order = o1;
   recomputeAllGuaranteed();
-  $('guaranteed').checked = pool.guaranteed;
+  if (poolName === state.activePool) {
+    $('guaranteed').checked = pool.guaranteed;
+  }
   persistData();
   renderRecordList();
+  if (document.querySelector('.tab[data-tab="stats"]')?.classList.contains('active')) {
+    renderStats();
+  }
+}
+
+// 從統計頁刪除紀錄（含確認）
+function deleteRecordFromStats(id, poolName) {
+  const pool = state.pools[poolName];
+  if (!pool) return;
+  const rec = pool.records.find(r => r.id === id);
+  if (!rec) return;
+  openConfirm({
+    title:   '確認刪除',
+    message: `確定要刪除「${esc(rec.name)}」#${rec.order}（${poolName}）嗎？此動作無法復原。`,
+    onOk:    () => {
+      pool.records = pool.records.filter(r => r.id !== id);
+      migrateOrCompactOrders();
+      recomputeAllGuaranteed();
+      if (poolName === state.activePool) {
+        $('guaranteed').checked = pool.guaranteed;
+      }
+      persistData();
+      renderRecordList();
+      renderStats();
+    },
+  });
 }
 
 // ── 通用 Confirm 對話框 ──────────────────────────────────────────────────────
@@ -1601,13 +1693,16 @@ function mergeImportedRecords(poolName, importedItems, insertMode = 'timestamp')
   if (!fresh.length) return 0;
 
   // 建立新紀錄物件
+  // ⚠ timestamp 不要 fallback 到 new Date()，否則 Excel 沒對應時間欄的紀錄會被
+  //   填上「現在」→ 之後 timestamp 排序時被當最新 → 跑到最上方。
+  //   保留空字串 → parseTimestamp 回 0 → 自然落到最下方（符合 Excel 補登舊紀錄的期待）。
   const newRecs = fresh.map(r => ({
     id:        newId(),
     name:      r.name,
     pullCount: r.pullCount,
     isOff:     !!r.isOff,
     upBanner:  r.upBanner || null,
-    timestamp: r.timestamp || new Date().toISOString(),
+    timestamp: r.timestamp || '',
     gachaId:   r.gachaId || null,
     source:    'import',
   }));
