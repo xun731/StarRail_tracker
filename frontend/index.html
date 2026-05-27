@@ -226,12 +226,74 @@
         </details>
       </div>
 
-      <!-- 預覽 -->
+      <!-- 從本機 CSV / Excel 匯入 -->
+      <div class="card">
+        <h2>📁 或：從 CSV / Excel 檔案匯入</h2>
+        <p class="info-note">
+          若你已有 CSV 或 Excel 形式的抽卡紀錄（從其他工具匯出、自製試算表…），可直接上傳。
+          支援格式：<code>.csv</code> / <code>.xlsx</code> / <code>.xls</code>
+        </p>
+        <div class="form-field">
+          <input type="file" id="import-file-input"
+                 accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
+        </div>
+        <div id="import-file-status" class="import-status" style="display:none"></div>
+
+        <div id="import-file-mapping" class="file-mapping" style="display:none">
+          <h3 class="sub-section">📌 欄位對應</h3>
+          <p class="info-note" id="import-file-rowcount" style="margin-bottom:10px"></p>
+
+          <div class="form-field">
+            <label>角色 / 光錐名稱 <span style="color:var(--red)">*</span></label>
+            <select id="map-name" class="form-select"></select>
+          </div>
+          <div class="form-field">
+            <label>抽數 <span style="color:var(--red)">*</span></label>
+            <select id="map-pull" class="form-select"></select>
+          </div>
+          <div class="form-field">
+            <label>歪（選填）</label>
+            <select id="map-isoff" class="form-select"></select>
+            <p class="info-note" style="margin-top:4px">支援值：是/否、true/false、歪/未歪、1/0、有值/空白</p>
+          </div>
+          <div class="form-field">
+            <label>歪自哪個 UP 池（選填）</label>
+            <select id="map-upbanner" class="form-select"></select>
+          </div>
+          <div class="form-field">
+            <label>時間戳記（選填，用於重複偵測）</label>
+            <select id="map-time" class="form-select"></select>
+          </div>
+          <div class="form-field">
+            <label>卡池（選填，若無則統一指定）</label>
+            <select id="map-pool" class="form-select"></select>
+          </div>
+          <div class="form-field">
+            <label>若上方未指定卡池，全部歸到：</label>
+            <select id="default-pool" class="form-select">
+              <option value="character">角色活動池</option>
+              <option value="light_cone">光錐活動池</option>
+              <option value="collab_char">聯動角色池</option>
+              <option value="collab_lc">聯動光錐池</option>
+              <option value="standard">常駐池</option>
+            </select>
+          </div>
+          <button id="import-file-preview-btn" class="btn-primary">預覽匯入紀錄</button>
+        </div>
+      </div>
+
+      <!-- 預覽（兩個來源共用） -->
       <div id="import-preview" class="card" style="display:none">
         <h2>📋 預覽抽卡紀錄</h2>
         <p class="info-note">
           勾選要匯入的紀錄；<strong>取消勾選你已手動輸入過的</strong>。
           匯入紀錄會以 📥 標記，與手動紀錄一起排序顯示。
+        </p>
+        <p class="warning-box" style="margin:8px 0">
+          ⚠ <strong>「歪」的判斷可能不完整</strong>：
+          系統用 <code>banner_history.js</code> 中的 UP 對照表判斷。
+          若該抽出時間沒收錄對應 banner，會保守地<strong>不標歪</strong>，
+          匯入後可至「統計分析」頁手動點 ✏️ 修正。
         </p>
         <div class="import-controls">
           <button class="btn-ghost" id="import-select-all">全選</button>
@@ -509,6 +571,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
   <script src="data.js"></script>
+  <script src="banner_history.js"></script>
+  <script src="banner_chars.js"></script>
   <script src="firebase.js"></script>
   <script src="app.js"></script>
 </body>

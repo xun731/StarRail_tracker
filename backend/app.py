@@ -12,6 +12,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+import re
 import requests
 import time
 from urllib.parse import urlparse, parse_qs
@@ -217,6 +218,159 @@ def extract_five_stars(raw_records: list, gacha_type: str) -> list:
 def health():
     """簡單健康檢查"""
     return jsonify({'ok': True, 'service': 'starrail-tracker-backend'})
+
+
+# ─── Banner 歷史代理（fandom wiki）───────────────────────────────────────────
+
+FANDOM_API = 'https://honkai-star-rail.fandom.com/zh/api.php'
+FANDOM_PAGE = '躍遷'
+BANNERS_CACHE_TTL = 12 * 60 * 60   # 12 小時
+_banners_cache = {'data': None, 'fetched_at': 0}
+
+
+def _parse_yymmdd(yymmdd: str) -> str:
+    """'23.04.26' → '2023-04-26 00:00:00'。失敗回空字串。"""
+    m = re.match(r'^(\d{2})\.(\d{2})\.(\d{2})$', yymmdd.strip())
+    if not m:
+        return ''
+    yy, mm, dd = m.groups()
+    return f'20{yy}-{mm}-{dd} 00:00:00'
+
+
+def _parse_banner_wikitext(wikitext: str):
+    """
+    從 wiki 原始碼解析 banner 列表。
+
+    結構（觀察自 fandom 躍遷頁）：
+      {| class="article-table sortable"
+      |+ 1.0版本
+      |-
+      |第一期<br>23.04.26<br>23.05.17||
+      [[File:蝶立鋒矚 2023-04-26.png|175px|link=蝶立鋒矚/2023-04-26]]
+      [[File:流昴定影 2023-04-26.png|175px|link=流昴定影/2023-04-26]]
+      |-
+      ...
+      |}
+
+    每張表代表一個版本；表內每個 row 是一期；row 內可能含 2 個或更多 File 連結
+    （第一個為角色 banner、第二個為光錐 banner；聯動時可能有 4 個）。
+
+    回傳：[
+      {
+        'version': '1.0',
+        'phase':   '第一期',
+        'start':   '2023-04-26 00:00:00',
+        'end':     '2023-05-17 00:00:00',
+        'items':   ['蝶立鋒矚', '流昴定影'],  # 裝飾名（按出現順序）
+      }, ...
+    ]
+    """
+    results = []
+    current_version = None
+
+    # 用 |+ XX版本 把 wikitext 切成「每個版本一段」
+    blocks = re.split(r'\|\+\s*([\d.]+)版本', wikitext)
+    # split 結果是 [前置, 版本1, 內容1, 版本2, 內容2, ...]
+    for i in range(1, len(blocks), 2):
+        version = blocks[i].strip()
+        body = blocks[i + 1] if i + 1 < len(blocks) else ''
+
+        # 每個 row 以 |- 分隔；row 內以 |XX期<br>YY.MM.DD<br>YY.MM.DD|| 開頭
+        rows = re.split(r'\|-+', body)
+        for row in rows:
+            # 期次 + 兩個日期
+            m = re.search(
+                r'(第[一二三四五六七八九十]+期)\s*<br>\s*([\d.]+)\s*<br>\s*([\d.]+)',
+                row
+            )
+            if not m:
+                continue
+            phase, start_raw, end_raw = m.groups()
+            start = _parse_yymmdd(start_raw)
+            end = _parse_yymmdd(end_raw)
+            if not start:
+                continue
+
+            # 抽出所有 File 連結中的「裝飾名」（File: 與 ' YYYY' 或 '.png' 之間那段）
+            files = re.findall(r'\[\[File:\s*([^\|\]]+?)\s+\d{4}-\d{2}-\d{2}\.png', row)
+            items = [f.strip() for f in files if f.strip()]
+            if not items:
+                continue
+
+            results.append({
+                'version': version,
+                'phase':   phase,
+                'start':   start,
+                'end':     end,
+                'items':   items,
+            })
+
+    return results
+
+
+def _fetch_banner_history():
+    """從 fandom 抓 + 快取。失敗會 raise。"""
+    now = time.time()
+    if _banners_cache['data'] is not None and (now - _banners_cache['fetched_at']) < BANNERS_CACHE_TTL:
+        return _banners_cache['data']
+
+    resp = requests.get(
+        FANDOM_API,
+        params={
+            'action': 'parse',
+            'page':   FANDOM_PAGE,
+            'format': 'json',
+            'prop':   'wikitext',
+        },
+        headers={
+            # 用真實瀏覽器 UA 避免被 fandom 擋
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    wikitext = data.get('parse', {}).get('wikitext', {}).get('*', '')
+    if not wikitext:
+        raise RuntimeError('fandom 回應沒有 wikitext')
+
+    banners = _parse_banner_wikitext(wikitext)
+    _banners_cache['data'] = banners
+    _banners_cache['fetched_at'] = now
+    return banners
+
+
+@app.route('/api/banners')
+def get_banners():
+    """
+    回傳 fandom wiki 上抓到的 banner 歷史。
+
+    Response: {
+      banners: [ { version, phase, start, end, items: [decorative_name, ...] } ],
+      meta:    { source, fetched_at, count },
+      note:    string  # 提醒前端：items 是裝飾名，需要本地對照表轉成角色名
+    }
+
+    Query: ?force=1  強制忽略快取重抓
+    """
+    if request.args.get('force') == '1':
+        _banners_cache['data'] = None
+    try:
+        banners = _fetch_banner_history()
+        return jsonify({
+            'banners': banners,
+            'meta': {
+                'source': f'{FANDOM_API}?page={FANDOM_PAGE}',
+                'fetched_at': time.strftime(
+                    '%Y-%m-%d %H:%M:%S', time.localtime(_banners_cache['fetched_at'])
+                ),
+                'count': len(banners),
+            },
+            'note': 'items 為 banner 裝飾名（如「蝶立鋒矚」），請前端用 banner_name_map.js 對照成實際角色 / 光錐名',
+        })
+    except Exception as e:
+        return jsonify({'error': f'抓取或解析失敗：{e}'}), 502
 
 
 @app.route('/api/validate', methods=['POST'])

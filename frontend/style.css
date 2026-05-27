@@ -531,6 +531,37 @@ table.records-table tr:hover td { background: var(--surface2); }
   font-size: .68rem; color: var(--muted); border: 1px solid var(--border);
   padding: 1px 6px; border-radius: 999px; flex-shrink: 0;
 }
+.imp-new-tag {
+  font-size: .68rem; color: var(--green); border: 1px solid var(--green);
+  background: rgba(46,204,113,.08);
+  padding: 1px 6px; border-radius: 999px; flex-shrink: 0;
+}
+
+/* CSV / Excel 上傳的欄位對應區 */
+.file-mapping {
+  margin-top: 14px; padding: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.file-mapping .sub-section {
+  margin-top: 0; margin-bottom: 10px;
+  color: var(--accent-h);
+}
+.file-mapping .form-select {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 7px 10px; font-size: .9rem; width: 100%;
+}
+.file-mapping .form-select:focus { outline: none; border-color: var(--accent); }
+#import-file-input {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 8px; font-size: .88rem; width: 100%;
+  cursor: pointer;
+}
+#import-file-input::file-selector-button {
+  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 5px 12px; margin-right: 10px; cursor: pointer; font-size: .85rem;
+}
+#import-file-input::file-selector-button:hover { background: var(--accent-h); }
 .imp-off-tag {
   font-size: .68rem; color: var(--red); border: 1px solid var(--red);
   padding: 1px 6px; border-radius: 999px; flex-shrink: 0;
@@ -540,7 +571,6 @@ table.records-table tr:hover td { background: var(--surface2); }
 .bar-source-icon, .ri-source-icon {
   font-size: .82rem; opacity: .8;
 }
-/* .bar-item.is-import { border-left-style: dashed; } */
 
 /* ── App Footer (備份) ─────────────────────────────────── */
 .app-footer {

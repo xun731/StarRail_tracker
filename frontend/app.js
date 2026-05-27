@@ -42,6 +42,15 @@ function newId() {
     : Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+/**
+ * 紀錄指紋（用於匯入時的重複偵測）。
+ * 用 name + pullCount + timestamp 三項組合判斷「兩筆紀錄是不是同一抽」。
+ * 比 gachaId 寬鬆（手動輸入的紀錄沒有 gachaId 但若 timestamp 一致也算同筆）。
+ */
+function fingerprint(r) {
+  return `${r.name}|${r.pullCount}|${r.timestamp || ''}`;
+}
+
 // ── 順序工具 ──────────────────────────────────────────────────────────────────
 /**
  * 依 order 升序排列。
@@ -147,12 +156,33 @@ function persistData() {
 }
 
 /**
+ * 對 pools 算個簡單指紋（不含 id / order）用於比對本機 vs 雲端是否一致。
+ */
+function poolsContentHash(pools) {
+  if (!pools) return '';
+  return Object.keys(pools).sort().map(k => {
+    const recs = (pools[k]?.records || [])
+      .map(r => fingerprint(r))
+      .sort()
+      .join(',');
+    return `${k}=[${recs}]`;
+  }).join('|');
+}
+
+function totalRecords(pools) {
+  if (!pools) return 0;
+  return Object.values(pools)
+    .reduce((s, p) => s + (Array.isArray(p?.records) ? p.records.length : 0), 0);
+}
+
+/**
  * 讀取使用者資料。
- * 回傳：{ source: 'cloud' | 'local' | 'empty', localHasRecords: boolean }
- *   - 'cloud'  : 從 Firestore 讀到資料，已套用
- *   - 'local'  : 沒讀到雲端資料、改用 localStorage
- *   - 'empty'  : 雲端與本機都沒資料
- *   localHasRecords 用於判斷是否需要詢問「上傳本機資料到雲端」
+ * 回傳：{ source, localHasRecords, conflict?: { cloudPools, localPools } }
+ *   - source 'cloud' : Firestore 有資料、已套用
+ *   - source 'local' : 雲端空、用 localStorage
+ *   - source 'empty' : 都沒資料
+ *   - conflict       : 雲端 + 本機都有資料且內容不同，需要使用者選一邊
+ *                      （此時 state.pools 預設用 cloud，使用者選 local 時才覆寫）
  */
 async function loadData() {
   const local = loadLocal();
@@ -163,9 +193,17 @@ async function loadData() {
     try {
       const cloud = await loadFromCloud(state.user.uid);
       if (cloud?.pools) {
+        // 雲端有資料 — 預設套用
         state.pools = cloud.pools;
         migrateOrCompactOrders();
-        return { source: 'cloud', localHasRecords };
+
+        // 衝突偵測：本機與雲端都有紀錄、內容不同
+        const conflict = (
+          localHasRecords &&
+          poolsContentHash(cloud.pools) !== poolsContentHash(local.pools)
+        ) ? { cloudPools: cloud.pools, localPools: local.pools } : null;
+
+        return { source: 'cloud', localHasRecords, conflict };
       }
     } catch (err) {
       showSync('error', `讀取雲端失敗：${err?.message || err}`);
@@ -205,6 +243,48 @@ $('sync-bar').addEventListener('click', () => {
   }
 });
 
+// ── 動態載入遠端 banner 歷史（best-effort，失敗用 static fallback） ───────────
+/**
+ * 從 backend 拉 fandom 的最新 banner，合併進全域 BANNER_HISTORY。
+ * 失敗（後端 sleep / 對照表缺）會 silent fallback 到 static 版本。
+ * 這個是「補強」而非「必要」— banner_history.js 永遠是備援。
+ */
+async function loadRemoteBanners() {
+  try {
+    // 直接查 DOM，避免 TDZ（importBackend const 在檔案後面才宣告）
+    const customBackend = $('import-backend')?.value;
+    const backend = (customBackend || getDefaultBackend()).trim().replace(/\/$/, '');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);  // 6 秒超時
+    const resp = await fetch(`${backend}/api/banners`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    const enhanced = convertBannersToHistory(data.banners || []);
+    if (enhanced.length === 0) {
+      console.info('[banners] 後端回傳了，但本地對照表都沒對應，繼續用 static banner_history.js');
+      return;
+    }
+
+    // 合併策略：先用後端的，再把 static 中後端沒涵蓋到的補進去
+    const enhancedFp = new Set(enhanced.map(b => `${b.type}|${b.start}|${b.up.join(',')}`));
+    const supplement = BANNER_HISTORY.filter(b =>
+      !enhancedFp.has(`${b.type}|${b.start}|${b.up.join(',')}`)
+    );
+    BANNER_HISTORY.length = 0;
+    BANNER_HISTORY.push(...enhanced, ...supplement);
+
+    console.info(`[banners] 已從後端載入 ${enhanced.length} 筆 banner（+${supplement.length} 筆 static 補充）`);
+  } catch (err) {
+    // 不擾使用者 — 後端 sleep / 沒部署都會走這條路
+    console.info('[banners] 遠端載入失敗，使用 static banner_history.js：', err?.message || err);
+  }
+}
+// setTimeout 0 把這個 call 推到 sync 初始化完成之後（避免 TDZ）
+setTimeout(loadRemoteBanners, 0);
+
 // ── Firebase 驗證 ─────────────────────────────────────────────────────────────
 initFirebase();
 
@@ -221,19 +301,50 @@ onAuthChange(async user => {
     $('auth-name').textContent = user.displayName || user.email;
     showSync('saved');
 
-    // 首次登入遷移：雲端是空的、但本機有紀錄 → 詢問是否上傳
+    // 情境 A：首次登入遷移（雲端空、本機有紀錄 → 詢問是否上傳）
     if (result?.source === 'local' && result?.localHasRecords) {
-      const totals = Object.values(state.pools)
-        .reduce((s, p) => s + (p.records?.length || 0), 0);
+      const totals = totalRecords(state.pools);
       openConfirm({
         title: '上傳本機資料到雲端？',
         message:
           `偵測到雲端帳號是空的，但本機有 <strong>${totals}</strong> 筆紀錄。<br>` +
           `要把本機資料上傳到雲端（Firestore）嗎？<br>` +
           `<span style="color:var(--muted)">之後在其他裝置登入同帳號就能看到。</span>`,
+        okText: '☁ 上傳到雲端',
+        cancelText: '保留本機（不上傳）',
         onOk: () => {
           persistData();
           showSync('saving');
+        },
+      });
+    }
+
+    // 情境 B：本機 + 雲端都有資料但內容不同 → 讓使用者選一邊
+    if (result?.conflict) {
+      const cloudCount = totalRecords(result.conflict.cloudPools);
+      const localCount = totalRecords(result.conflict.localPools);
+      openConfirm({
+        title: '本機與雲端資料不同',
+        message:
+          `偵測到兩邊紀錄不一致，請選擇要套用哪一份（另一份會被覆蓋）：<br><br>` +
+          `&nbsp;&nbsp;☁ <strong>雲端</strong>：${cloudCount} 筆紀錄<br>` +
+          `&nbsp;&nbsp;💾 <strong>本機</strong>：${localCount} 筆紀錄<br><br>` +
+          `<span style="color:var(--muted)">目前只能擇一，無法自動合併。</span>`,
+        okText: '☁ 使用雲端',
+        cancelText: '💾 使用本機',
+        onOk: () => {
+          // 已預設套用雲端，再寫一次本機以同步
+          state.pools = result.conflict.cloudPools;
+          migrateOrCompactOrders();
+          persistData();   // 同時更新本機與雲端（內容一致，無實質改變）
+          renderAll();
+        },
+        onCancel: () => {
+          // 用本機覆寫雲端
+          state.pools = result.conflict.localPools;
+          migrateOrCompactOrders();
+          persistData();   // 觸發寫雲端
+          renderAll();
         },
       });
     }
@@ -899,25 +1010,39 @@ function moveRecord(id, dir) {
 }
 
 // ── 通用 Confirm 對話框 ──────────────────────────────────────────────────────
-let confirmCallback = null;
-function openConfirm({ title = '確認', message = '', onOk }) {
+let confirmOkCallback = null;
+let confirmCancelCallback = null;
+function openConfirm({
+  title = '確認',
+  message = '',
+  okText = '確認',
+  cancelText = '取消',
+  onOk,
+  onCancel,
+}) {
   $('confirm-title').textContent   = title;
   $('confirm-message').innerHTML   = message;   // 允許簡單 HTML（已 esc）
-  confirmCallback = onOk;
+  $('confirm-ok').textContent      = okText;
+  $('confirm-cancel').textContent  = cancelText;
+  confirmOkCallback     = onOk;
+  confirmCancelCallback = onCancel;
   $('confirm-modal').style.display = '';
 }
-function closeConfirm() {
-  confirmCallback = null;
+function closeConfirm(triggerCancel = true) {
+  const cancelCb = confirmCancelCallback;
+  confirmOkCallback = null;
+  confirmCancelCallback = null;
   $('confirm-modal').style.display = 'none';
+  if (triggerCancel && cancelCb) cancelCb();
 }
-$('confirm-cancel').addEventListener('click', closeConfirm);
+$('confirm-cancel').addEventListener('click', () => closeConfirm(true));
 $('confirm-ok').addEventListener('click', () => {
-  const cb = confirmCallback;
-  closeConfirm();
+  const cb = confirmOkCallback;
+  closeConfirm(false);   // OK 路徑不觸發 onCancel
   cb?.();
 });
 $('confirm-modal').addEventListener('click', e => {
-  if (e.target === $('confirm-modal')) closeConfirm();
+  if (e.target === $('confirm-modal')) closeConfirm(true);
 });
 
 // ── JSON 備份：匯出 ──────────────────────────────────────────────────────────
@@ -1032,6 +1157,185 @@ function setImportStatus(type, msg) {
   importStatus.textContent = msg;
 }
 
+// ── 檔案匯入（CSV / Excel） ─────────────────────────────────────────────────
+const PAPAPARSE_CDN = 'https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js';
+const XLSX_CDN      = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+const FIELD_MAP_IDS = ['map-name', 'map-pull', 'map-isoff', 'map-upbanner', 'map-time', 'map-pool'];
+
+let fileParsedRows = null;
+let fileParsedHeaders = [];
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[data-src="${src}"]`)) return resolve();
+    const s = document.createElement('script');
+    s.src = src;
+    s.dataset.src = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error(`載入失敗：${src}`));
+    document.head.appendChild(s);
+  });
+}
+
+function setFileStatus(type, msg) {
+  const bar = $('import-file-status');
+  bar.style.display = msg ? '' : 'none';
+  bar.className = `import-status ${type}`;
+  bar.textContent = msg;
+}
+
+/** 把各種真假值正規化成 boolean。空白 = false。 */
+function parseIsOffValue(v) {
+  if (v === null || v === undefined) return false;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return false;
+  if (['true', '1', '是', '歪', 'yes', 'y', 'off', 'lose'].includes(s)) return true;
+  if (['false', '0', '否', '未歪', '沒歪', 'no', 'n', 'up', 'win'].includes(s)) return false;
+  return true;   // 有非空值且不在已知 false 列表 → 視為 true
+}
+
+/** 把使用者填的「卡池」欄位值對應到內部 pool key。 */
+function parsePoolValue(v) {
+  if (!v) return null;
+  const s = String(v).trim().toLowerCase();
+  const map = {
+    'character': 'character', '11': 'character',
+    '角色': 'character', '角色活動': 'character', '角色池': 'character', '角色活動池': 'character',
+    'light_cone': 'light_cone', 'lightcone': 'light_cone', 'weapon': 'light_cone', '12': 'light_cone',
+    '光錐': 'light_cone', '光錐池': 'light_cone', '光錐活動池': 'light_cone',
+    'standard': 'standard', '1': 'standard',
+    '常駐': 'standard', '常駐池': 'standard',
+    'collab_char': 'collab_char', '聯動角色': 'collab_char', '聯動角色池': 'collab_char',
+    'collab_lc': 'collab_lc', '聯動光錐': 'collab_lc', '聯動光錐池': 'collab_lc',
+  };
+  return map[s] || null;
+}
+
+function autoMapField(selectId, headers, keywords) {
+  const found = headers.find(h =>
+    keywords.some(k => h && h.toString().toLowerCase().includes(k.toLowerCase()))
+  );
+  if (found) $(selectId).value = found;
+}
+
+function fillMappingDropdowns(headers) {
+  const optionHtml = '<option value="">— 不對應 —</option>' +
+    headers.map(h => `<option value="${esc(h)}">${esc(h)}</option>`).join('');
+  FIELD_MAP_IDS.forEach(id => { $(id).innerHTML = optionHtml; });
+
+  autoMapField('map-name',     headers, ['名稱', 'name', '角色', '光錐', '物品', 'item']);
+  autoMapField('map-pull',     headers, ['抽數', 'pullcount', 'pull_count', 'count', 'pity']);
+  autoMapField('map-isoff',    headers, ['歪', 'isoff', 'is_off', 'off']);
+  autoMapField('map-upbanner', headers, ['歪自', 'upbanner', 'up_banner', '當期', 'up角色']);
+  autoMapField('map-time',     headers, ['時間', 'time', 'date', 'timestamp', '日期']);
+  autoMapField('map-pool',     headers, ['卡池', 'pool', 'gacha_type', 'banner']);
+}
+
+async function onFileChosen(file) {
+  setFileStatus('loading', '⏳ 解析檔案中…');
+  $('import-file-mapping').style.display = 'none';
+  fileParsedRows = null;
+  fileParsedHeaders = [];
+
+  const ext = file.name.toLowerCase().split('.').pop();
+  try {
+    if (ext === 'csv') {
+      await loadScriptOnce(PAPAPARSE_CDN);
+      const text = await file.text();
+      const result = window.Papa.parse(text, { header: true, skipEmptyLines: true });
+      if (result.errors?.length) console.warn('[CSV] parse warnings', result.errors);
+      fileParsedRows = result.data;
+      fileParsedHeaders = result.meta.fields || [];
+    } else if (ext === 'xlsx' || ext === 'xls') {
+      await loadScriptOnce(XLSX_CDN);
+      const buf = await file.arrayBuffer();
+      const wb = window.XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      fileParsedRows = window.XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      fileParsedHeaders = fileParsedRows.length
+        ? Object.keys(fileParsedRows[0])
+        : [];
+    } else {
+      throw new Error('不支援的檔案格式（請選 .csv / .xlsx / .xls）');
+    }
+
+    if (!fileParsedRows?.length) throw new Error('檔案內容為空');
+
+    fillMappingDropdowns(fileParsedHeaders);
+    $('import-file-rowcount').textContent =
+      `共讀到 ${fileParsedRows.length} 列、${fileParsedHeaders.length} 個欄位。請對應下列欄位後按「預覽匯入紀錄」。`;
+    $('import-file-mapping').style.display = '';
+    setFileStatus('success', `✅ 已讀取 ${file.name}`);
+  } catch (err) {
+    setFileStatus('error', `❌ ${err.message || err}`);
+  }
+}
+
+$('import-file-input').addEventListener('change', e => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  onFileChosen(file);
+});
+
+$('import-file-preview-btn').addEventListener('click', () => {
+  if (!fileParsedRows?.length) {
+    setFileStatus('error', '⚠ 還沒選檔案');
+    return;
+  }
+  const mapName     = $('map-name').value;
+  const mapPull     = $('map-pull').value;
+  const mapIsOff    = $('map-isoff').value;
+  const mapUpBanner = $('map-upbanner').value;
+  const mapTime     = $('map-time').value;
+  const mapPool     = $('map-pool').value;
+  const defaultPool = $('default-pool').value;
+
+  if (!mapName || !mapPull) {
+    setFileStatus('error', '⚠ 必填欄位「名稱」與「抽數」尚未對應');
+    return;
+  }
+
+  const grouped = Object.fromEntries(Object.keys(POOL_LIMIT).map(p => [p, []]));
+  let skipped = 0;
+
+  fileParsedRows.forEach(row => {
+    const name = String(row[mapName] ?? '').trim();
+    const pull = parseInt(row[mapPull], 10);
+    if (!name || !pull || pull < 1) { skipped++; return; }
+
+    const poolRaw = mapPool ? parsePoolValue(row[mapPool]) : null;
+    const pool = poolRaw || defaultPool;
+    if (!grouped[pool]) { skipped++; return; }
+
+    const isOff   = mapIsOff    ? parseIsOffValue(row[mapIsOff]) : false;
+    const upBann  = mapUpBanner ? (String(row[mapUpBanner] ?? '').trim() || null) : null;
+    const tsRaw   = mapTime     ? String(row[mapTime] ?? '').trim() : '';
+
+    grouped[pool].push({
+      name,
+      pullCount: pull,
+      isOff,
+      upBanner: upBann,
+      timestamp: tsRaw,
+      gachaId: null,     // 檔案匯入無 gachaId，只能靠 fingerprint 去重
+      source: 'import',
+    });
+  });
+
+  const total = Object.values(grouped).reduce((s, arr) => s + arr.length, 0);
+  if (!total) {
+    setFileStatus('error', '⚠ 沒有任何有效紀錄可匯入（檢查欄位對應）');
+    return;
+  }
+
+  importPreviewData = grouped;
+  setFileStatus('success',
+    `✅ 已轉換 ${total} 筆紀錄${skipped ? `（跳過 ${skipped} 筆無效列）` : ''}。請至下方預覽勾選。`);
+  renderImportPreview();
+  // 滾到預覽區
+  $('import-preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
 $('import-fetch-btn').addEventListener('click', async () => {
   const backend = (importBackend.value || getDefaultBackend()).trim().replace(/\/$/, '');
   const url     = importUrl.value.trim();
@@ -1094,9 +1398,11 @@ function renderImportPreview() {
   Object.keys(poolMeta).forEach(pool => {
     const items = importPreviewData[pool] || [];
     if (!items.length) return;
-    const existing = new Set(
-      (state.pools[pool]?.records || [])
-        .map(r => r.gachaId).filter(Boolean));
+
+    // 既有紀錄的 dedup 索引
+    const existingRecs = state.pools[pool]?.records || [];
+    const existingGachaIds = new Set(existingRecs.map(r => r.gachaId).filter(Boolean));
+    const existingFps = new Set(existingRecs.map(r => fingerprint(r)));
 
     html += `<div class="import-pool-section">
       <div class="import-pool-title ${poolMeta[pool].cls}">
@@ -1104,7 +1410,19 @@ function renderImportPreview() {
       </div>`;
 
     items.forEach((r, i) => {
-      const isDup = r.gachaId && existing.has(r.gachaId);
+      // 用 banner history 重新判定 isOff（後端只認常駐角色為歪，不夠精準）
+      const entryType = getEntryType(r.name);
+      r.isOff = isPullOffBanner(pool, r.name, r.timestamp, entryType);
+
+      // dedup：先看 gachaId（最精準），再看 fingerprint（name + pullCount + timestamp）
+      const isDupById = r.gachaId && existingGachaIds.has(r.gachaId);
+      const isDupByFp = existingFps.has(fingerprint(r));
+      const isDup = isDupById || isDupByFp;
+
+      const statusTag = isDup
+        ? '<span class="imp-dup-tag">已存在</span>'
+        : '<span class="imp-new-tag">新紀錄</span>';
+
       html += `
         <label class="import-item ${isDup ? 'dup' : ''}">
           <input type="checkbox" class="imp-cb" data-pool="${pool}" data-idx="${i}"
@@ -1113,7 +1431,7 @@ function renderImportPreview() {
           ${r.isOff ? '<span class="imp-off-tag">歪</span>' : ''}
           <span class="imp-pity">${r.pullCount} 抽</span>
           <span class="imp-date">${esc(r.timestamp || '')}</span>
-          ${isDup ? '<span class="imp-dup-tag">已匯入過</span>' : ''}
+          ${statusTag}
         </label>`;
     });
     html += '</div>';
