@@ -278,6 +278,17 @@
               <option value="standard">常駐池</option>
             </select>
           </div>
+          <div class="form-field">
+            <label>插入位置</label>
+            <select id="file-insert-pos" class="form-select">
+              <option value="bottom" selected>插入到最下方（最舊，預設）</option>
+              <option value="top">插入到最上方（最新）</option>
+              <option value="timestamp">依時間戳記排序（需在上面對應時間欄）</option>
+            </select>
+            <p class="info-note" style="margin-top:4px">
+              Excel 多半是六個月以前的舊紀錄，建議「插入到最下方」。
+            </p>
+          </div>
           <button id="import-file-preview-btn" class="btn-primary">預覽匯入紀錄</button>
         </div>
       </div>
@@ -571,8 +582,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
   <script src="data.js"></script>
-  <script src="banner_history.js"></script>
   <script src="banner_chars.js"></script>
+  <script src="banner_history.js"></script>
   <script src="firebase.js"></script>
   <script src="app.js"></script>
 </body>

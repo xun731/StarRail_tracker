@@ -246,44 +246,56 @@ $('sync-bar').addEventListener('click', () => {
 // ── 動態載入遠端 banner 歷史（best-effort，失敗用 static fallback） ───────────
 /**
  * 從 backend 拉 fandom 的最新 banner，合併進全域 BANNER_HISTORY。
- * 失敗（後端 sleep / 對照表缺）會 silent fallback 到 static 版本。
- * 這個是「補強」而非「必要」— banner_history.js 永遠是備援。
+ *
+ * - 第一次呼叫會啟動 fetch 並 cache 該 Promise；
+ *   後續呼叫回傳同個 Promise（不會重複打 backend）。
+ * - 匯入流程 await 它確保 banner 資料就緒，再做歪判定。
+ * - 預設冷啟動 backend 給 25 秒 timeout（Render free tier 喚醒約 30s 內）。
  */
-async function loadRemoteBanners() {
-  try {
-    // 直接查 DOM，避免 TDZ（importBackend const 在檔案後面才宣告）
-    const customBackend = $('import-backend')?.value;
-    const backend = (customBackend || getDefaultBackend()).trim().replace(/\/$/, '');
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 6000);  // 6 秒超時
-    const resp = await fetch(`${backend}/api/banners`, { signal: ctrl.signal });
-    clearTimeout(timer);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
+let _remoteBannersPromise = null;
+function loadRemoteBanners(timeoutMs = 25000) {
+  if (_remoteBannersPromise) return _remoteBannersPromise;
+  _remoteBannersPromise = (async () => {
+    try {
+      const customBackend = $('import-backend')?.value;
+      const backend = (customBackend || getDefaultBackend()).trim().replace(/\/$/, '');
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      const resp = await fetch(`${backend}/api/banners`, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
 
-    const enhanced = convertBannersToHistory(data.banners || []);
-    if (enhanced.length === 0) {
-      console.info('[banners] 後端回傳了，但本地對照表都沒對應，繼續用 static banner_history.js');
-      return;
+      const enhanced = convertBannersToHistory(data.banners || []);
+      if (enhanced.length === 0) {
+        console.info('[banners] 後端回傳了，但本地對照表都沒對應，繼續用 static banner_history.js');
+        return false;
+      }
+
+      // 合併策略：先用後端的，再把 static 中後端沒涵蓋到的補進去
+      const enhancedFp = new Set(enhanced.map(b => `${b.type}|${b.start}|${b.up.join(',')}`));
+      const supplement = BANNER_HISTORY.filter(b =>
+        !enhancedFp.has(`${b.type}|${b.start}|${b.up.join(',')}`)
+      );
+      BANNER_HISTORY.length = 0;
+      BANNER_HISTORY.push(...enhanced, ...supplement);
+
+      console.info(`[banners] 已從後端載入 ${enhanced.length} 筆 banner（+${supplement.length} 筆 static 補充）`);
+      return true;
+    } catch (err) {
+      // 不擾使用者 — 後端 sleep / 沒部署都會走這條路
+      console.info('[banners] 遠端載入失敗，使用 static banner_history.js：', err?.message || err);
+      // 失敗後允許重試：清掉 cache，下次呼叫會重新嘗試
+      _remoteBannersPromise = null;
+      return false;
     }
-
-    // 合併策略：先用後端的，再把 static 中後端沒涵蓋到的補進去
-    const enhancedFp = new Set(enhanced.map(b => `${b.type}|${b.start}|${b.up.join(',')}`));
-    const supplement = BANNER_HISTORY.filter(b =>
-      !enhancedFp.has(`${b.type}|${b.start}|${b.up.join(',')}`)
-    );
-    BANNER_HISTORY.length = 0;
-    BANNER_HISTORY.push(...enhanced, ...supplement);
-
-    console.info(`[banners] 已從後端載入 ${enhanced.length} 筆 banner（+${supplement.length} 筆 static 補充）`);
-  } catch (err) {
-    // 不擾使用者 — 後端 sleep / 沒部署都會走這條路
-    console.info('[banners] 遠端載入失敗，使用 static banner_history.js：', err?.message || err);
-  }
+  })();
+  return _remoteBannersPromise;
 }
-// setTimeout 0 把這個 call 推到 sync 初始化完成之後（避免 TDZ）
-setTimeout(loadRemoteBanners, 0);
+// 不再自動預載 — banner_history.js 靜態資料已涵蓋 1.0-4.1。
+// 若 /api/banners 可用，匯入時會 await 一次當作補強；失敗則靜態為主。
+// setTimeout(() => loadRemoteBanners(), 0);
 
 // ── Firebase 驗證 ─────────────────────────────────────────────────────────────
 initFirebase();
@@ -1132,6 +1144,7 @@ $('copy-script-btn')?.addEventListener('click', async () => {
 
 // ── 匯入抽卡紀錄（連線 Flask 後端） ─────────────────────────────────────────
 let importPreviewData = null;   // 後端回傳的 raw 預覽資料
+let importPreviewSource = 'authkey';   // 'authkey' | 'file' — 決定 confirm 時的插入模式
 
 const importBackend = $('import-backend');
 const importUrl     = $('import-url');
@@ -1277,7 +1290,7 @@ $('import-file-input').addEventListener('change', e => {
   onFileChosen(file);
 });
 
-$('import-file-preview-btn').addEventListener('click', () => {
+$('import-file-preview-btn').addEventListener('click', async () => {
   if (!fileParsedRows?.length) {
     setFileStatus('error', '⚠ 還沒選檔案');
     return;
@@ -1329,11 +1342,22 @@ $('import-file-preview-btn').addEventListener('click', () => {
   }
 
   importPreviewData = grouped;
+  importPreviewSource = 'file';   // 標記為檔案來源，confirm 時用 file-insert-pos
+
+  if (window._bannerMissLog) window._bannerMissLog.clear();
+
   setFileStatus('success',
     `✅ 已轉換 ${total} 筆紀錄${skipped ? `（跳過 ${skipped} 筆無效列）` : ''}。請至下方預覽勾選。`);
   renderImportPreview();
   // 滾到預覽區
   $('import-preview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const missCount = window._bannerMissLog?.size || 0;
+  if (missCount > 0) {
+    console.warn(
+      `[歪判定] 有 ${missCount} 筆紀錄的時間沒對應到 banner（在 console 跑 [...window._bannerMissLog] 看清單）`
+    );
+  }
 });
 
 $('import-fetch-btn').addEventListener('click', async () => {
@@ -1365,6 +1389,7 @@ $('import-fetch-btn').addEventListener('click', async () => {
     if (data.error) throw new Error(data.error);
 
     importPreviewData = data.records || {};
+    importPreviewSource = 'authkey';   // 標記來源（authkey 走 timestamp 排序）
 
     const totals = Object.entries(importPreviewData)
       .map(([p, arr]) => `${p}:${arr.length}`).join('  ');
@@ -1372,8 +1397,20 @@ $('import-fetch-btn').addEventListener('click', async () => {
       ? `（部分卡池有錯：${data.errors.map(e => `${e.pool}=${e.error}`).join('; ')}）`
       : '';
 
+    // banner 資料已靜態烘進 banner_history.js（1.0–4.1 完整），不必等遠端
+    if (window._bannerMissLog) window._bannerMissLog.clear();
+
     setImportStatus('success', `✅ 抓取完成。${totals}${errMsg}`);
     renderImportPreview();
+
+    // 若有大量找不到 banner，提醒使用者
+    const missCount = window._bannerMissLog?.size || 0;
+    if (missCount > 0) {
+      console.warn(
+        `[歪判定] 有 ${missCount} 筆紀錄的時間沒對應到 banner（在 console 跑 [...window._bannerMissLog] 看清單）。` +
+        `可能原因：後端 sleep / banner_chars.js 該版本沒收 / banner 日期不在範圍。`
+      );
+    }
   } catch (err) {
     let msg = err.message || String(err);
     if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
@@ -1484,21 +1521,34 @@ $('import-confirm-btn').addEventListener('click', () => {
     return;
   }
 
+  // 決定插入模式：file 走使用者選擇、authkey 預設 timestamp 排序
+  const insertMode = importPreviewSource === 'file'
+    ? ($('file-insert-pos')?.value || 'bottom')
+    : 'timestamp';
+
+  const modeLabel = {
+    top:       '插入到最上方（最新）',
+    bottom:    '插入到最下方（最舊）',
+    timestamp: '依時間戳記與現有紀錄混排',
+  }[insertMode] || insertMode;
+
   openConfirm({
     title: '確認匯入',
     message:
       `將匯入 <strong>${total}</strong> 筆五星紀錄。<br>` +
-      `匯入紀錄會以 <strong>📥</strong> 標記，置於最上方並依時間排序。<br>` +
-      `<span style="color:var(--muted)">已存在的（gachaId 相同）會自動跳過。手動紀錄不會被修改。</span>`,
+      `插入方式：<strong>${modeLabel}</strong><br>` +
+      `匯入紀錄會以 <strong>📥</strong> 標記。<br>` +
+      `<span style="color:var(--muted)">已存在的（gachaId 或同 name+pullCount+timestamp）會自動跳過。手動紀錄內容不會被修改。</span>`,
     onOk: () => {
       let added = 0;
       Object.keys(selected).forEach(pool => {
-        added += mergeImportedRecords(pool, selected[pool]);
+        added += mergeImportedRecords(pool, selected[pool], insertMode);
       });
       recomputeAllGuaranteed();
       persistData();
 
       importPreviewData = null;
+      importPreviewSource = 'authkey';   // 重置回預設
       $('import-preview').style.display = 'none';
       setImportStatus('success', `✅ 已匯入 ${added} 筆新紀錄`);
 
@@ -1526,7 +1576,17 @@ function parseTimestamp(ts) {
   return Number.isFinite(t) ? t : 0;
 }
 
-function mergeImportedRecords(poolName, importedItems) {
+/**
+ * 把匯入紀錄合併進指定卡池。
+ *
+ * @param {string} poolName
+ * @param {Array}  importedItems
+ * @param {'timestamp'|'top'|'bottom'} insertMode
+ *   - 'timestamp'：全池依 timestamp 重排（適合 authkey 匯入，每筆有真實時間）
+ *   - 'top'      ：新匯入塞最上方 #1..#N（適合最新資料的批次匯入）
+ *   - 'bottom'   ：新匯入塞最下方（適合 Excel/CSV 補登的舊紀錄）
+ */
+function mergeImportedRecords(poolName, importedItems, insertMode = 'timestamp') {
   const pool = state.pools[poolName];
 
   // 重複偵測：gachaId（精準）+ fingerprint（手動紀錄沒 gachaId 時的 fallback）
@@ -1540,28 +1600,39 @@ function mergeImportedRecords(poolName, importedItems) {
   });
   if (!fresh.length) return 0;
 
-  // 全部塞進去（order 等下統一重排）
-  fresh.forEach(r => {
-    pool.records.push({
-      id:        newId(),
-      name:      r.name,
-      pullCount: r.pullCount,
-      isOff:     !!r.isOff,
-      upBanner:  r.upBanner || null,
-      timestamp: r.timestamp || new Date().toISOString(),
-      gachaId:   r.gachaId || null,
-      source:    'import',
-    });
-  });
+  // 建立新紀錄物件
+  const newRecs = fresh.map(r => ({
+    id:        newId(),
+    name:      r.name,
+    pullCount: r.pullCount,
+    isOff:     !!r.isOff,
+    upBanner:  r.upBanner || null,
+    timestamp: r.timestamp || new Date().toISOString(),
+    gachaId:   r.gachaId || null,
+    source:    'import',
+  }));
 
-  // 全部紀錄依 timestamp 由新到舊重排 → 重新指派 order
-  // Array.sort 在 ES2019+ 是穩定排序，同 timestamp 維持原相對順序
-  pool.records.sort((a, b) => {
-    const tb = parseTimestamp(b.timestamp);
-    const ta = parseTimestamp(a.timestamp);
-    return tb - ta;
-  });
-  pool.records.forEach((r, i) => { r.order = i + 1; });
+  if (insertMode === 'top') {
+    // 新紀錄之間先依 timestamp 由新到舊排
+    newRecs.sort((a, b) => parseTimestamp(b.timestamp) - parseTimestamp(a.timestamp));
+    // 既有紀錄整體下移
+    pool.records.forEach(r => { r.order = (r.order || 0) + newRecs.length; });
+    // 新紀錄佔 #1..#N
+    newRecs.forEach((r, i) => { r.order = i + 1; });
+    pool.records.push(...newRecs);
+  } else if (insertMode === 'bottom') {
+    // 新紀錄之間先依 timestamp 由新到舊排（同 timestamp 維持原順序）
+    newRecs.sort((a, b) => parseTimestamp(b.timestamp) - parseTimestamp(a.timestamp));
+    // 排到最下方
+    const baseOrder = pool.records.length;
+    newRecs.forEach((r, i) => { r.order = baseOrder + i + 1; });
+    pool.records.push(...newRecs);
+  } else {
+    // 'timestamp' — 全池依 timestamp 重排
+    pool.records.push(...newRecs);
+    pool.records.sort((a, b) => parseTimestamp(b.timestamp) - parseTimestamp(a.timestamp));
+    pool.records.forEach((r, i) => { r.order = i + 1; });
+  }
 
   return fresh.length;
 }
