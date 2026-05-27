@@ -1370,7 +1370,7 @@ $('import-fetch-btn').addEventListener('click', async () => {
     return;
   }
 
-  setImportStatus('loading', '⏳ 連線後端中…匯入需 10–60 秒（要分頁拉 6 個月歷史）');
+  setImportStatus('loading', '⏳ 連線後端中…匯入需 30–90 秒（要分頁拉 6 個月歷史）');
   $('import-preview').style.display = 'none';
   importPreviewData = null;
 
