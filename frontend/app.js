@@ -727,6 +727,21 @@ $('edit-is-off').addEventListener('change', () => {
   if (!$('edit-is-off').checked) editUpInput.value = '';
 });
 
+// edit modal「略」checkbox：切換時隱藏/顯示歪 & UP 池欄位
+$('edit-is-skip').addEventListener('change', () => {
+  const isSkip = $('edit-is-skip').checked;
+  const poolName = state.editingPool || state.activePool;
+  if (isSkip) {
+    $('edit-is-off').checked = false;
+    $('edit-is-off-row').style.display    = 'none';
+    $('edit-up-banner-row').style.display = 'none';
+    editUpInput.value = '';
+  } else {
+    $('edit-is-off-row').style.display =
+      POOL_HAS_UP[poolName] ? '' : 'none';
+  }
+});
+
 // ── 自動補全共用函式 ──────────────────────────────────────────────────────────
 function renderAcList(list, matches, input, currentIdx, setIdx, onSelect) {
   if (!matches.length) { list.style.display = 'none'; return; }
@@ -868,15 +883,18 @@ function openEditModal(recordId, poolName = state.activePool) {
   const isSkip = rec.kind === 'skip';
   state.editingId   = recordId;
   state.editingPool = poolName;
-  $('edit-modal-order').textContent =
-    `#${rec.order}  ·  ${poolName}${isSkip ? '  ·  📋 略' : ''}`;
+  $('edit-modal-order').textContent = `#${rec.order}  ·  ${poolDisplayName(poolName)}`;
   editNameInput.value = rec.name;
   editNameInput.style.borderColor = '';
   $('edit-pull-count-input').value = rec.pullCount;
   $('edit-pull-count-input').style.borderColor = '';
 
+  // 略 checkbox
+  $('edit-is-skip').checked = isSkip;
+
   // 略紀錄不顯示歪 / UP 池欄位
   const showOff = POOL_HAS_UP[poolName] && !isSkip;
+  $('edit-is-skip-row').style.display = ''; // 一律可切換
   $('edit-is-off-row').style.display = showOff ? '' : 'none';
   $('edit-is-off').checked = isSkip ? false : !!rec.isOff;
   $('edit-up-banner-row').style.display = (showOff && rec.isOff) ? '' : 'none';
@@ -900,7 +918,7 @@ function saveEdit() {
   const rec  = pool?.records.find(r => r.id === id);
   if (!rec) { closeEditModal(); return; }
 
-  const isSkip    = rec.kind === 'skip';
+  const isSkip    = $('edit-is-skip').checked;   // 可在 modal 切換
   const name      = editNameInput.value.trim();
   const pullCount = parseInt($('edit-pull-count-input').value);
   const isOff     = (!isSkip && POOL_HAS_UP[poolName]) ? $('edit-is-off').checked : false;
@@ -919,7 +937,7 @@ function saveEdit() {
   rec.pullCount = pullCount;
   rec.isOff     = isOff;
   rec.upBanner  = upBanner;
-  // rec.kind 不變（編輯不能改 normal ↔ skip，要改就刪掉重新建立）
+  rec.kind      = isSkip ? 'skip' : 'normal';   // 可切換 normal ↔ 略
 
   recomputeAllGuaranteed();
   // 若改的是現在 active pool，同步 guaranteed 顯示
