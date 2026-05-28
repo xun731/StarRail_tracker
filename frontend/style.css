@@ -467,6 +467,53 @@ table.records-table tr:hover td { background: var(--surface2); }
   max-height: 240px; overflow-y: auto;
 }
 
+/* ── 「略」紀錄樣式 ────────────────────────────────────── */
+/* 列表項（新增紀錄分頁） */
+.record-item.is-skip {
+  background: rgba(120,120,160,.08);
+  opacity: .85;
+}
+.record-item.is-skip .ri-name {
+  color: var(--muted); font-weight: 500;
+}
+.ri-tag.skip {
+  background: rgba(120,120,160,.15);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* Bar item（統計頁） */
+.bar-item.is-skip {
+  background: rgba(120,120,160,.08);
+  border-left: 3px dashed var(--muted) !important;
+  opacity: .8;
+}
+.bar-item.is-skip .bar-name { color: var(--muted); font-weight: 500; }
+.bar-item.is-skip .bar-thumb {
+  background: var(--surface);
+  font-size: 1.2rem;
+  color: var(--muted);
+}
+.bar-item.is-skip .bar-count { color: var(--muted); }
+
+/* 略的 bar-tag */
+.bar-tag.skip {
+  background: rgba(120,120,160,.15);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* 略的進度條：灰色斜紋（暗示非實際出金） */
+.bar-fill.bar-gray {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(120,120,160,.5),
+    rgba(120,120,160,.5) 8px,
+    rgba(120,120,160,.3) 8px,
+    rgba(120,120,160,.3) 16px
+  );
+}
+
 /* 批量移動 picker banner */
 .picker-banner {
   display: flex; align-items: center; gap: 12px;

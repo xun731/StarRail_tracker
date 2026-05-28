@@ -51,6 +51,41 @@ function fingerprint(r) {
   return `${r.name}|${r.pullCount}|${r.timestamp || ''}`;
 }
 
+/** 池名稱 → 中文顯示 */
+const POOL_DISPLAY = {
+  character:   '角色活動池',
+  light_cone:  '光錐活動池',
+  collab_char: '聯動角色池',
+  collab_lc:   '聯動光錐池',
+  standard:    '常駐池',
+};
+function poolDisplayName(p) { return POOL_DISPLAY[p] || p; }
+
+/**
+ * 計算單一卡池統計。
+ * 平均出金/UP 抽數：分子為「所有抽數（含略 + 目前已墊）」，分母為出金/UP 次數
+ * — 因為即使沒出金的抽數也消耗了，應納入平均。
+ * @returns { totalPulls, fiveCount, avgPity, avgUpPity, offRate, pity, skipPulls }
+ */
+function computePoolStats(poolName) {
+  const p = state.pools[poolName];
+  const records = p.records || [];
+  const hasUp = POOL_HAS_UP[poolName];
+
+  const normalRecs = records.filter(r => r.kind !== 'skip');
+  const skipPulls  = records.reduce((s, r) => s + (r.kind === 'skip' ? r.pullCount : 0), 0);
+  const totalPulls = records.reduce((s, r) => s + r.pullCount, 0) + p.pity;
+  const fiveCount  = normalRecs.length;
+  const upRecs     = normalRecs.filter(r => !r.isOff);
+
+  const avgPity = fiveCount ? +(totalPulls / fiveCount).toFixed(1) : '—';
+  const avgUpPity = (hasUp && upRecs.length) ? +(totalPulls / upRecs.length).toFixed(1) : '—';
+  const offRate = (hasUp && fiveCount)
+    ? `${(normalRecs.filter(r => r.isOff).length / fiveCount * 100).toFixed(0)}%` : '—';
+
+  return { totalPulls, fiveCount, avgPity, avgUpPity, offRate, pity: p.pity, skipPulls };
+}
+
 // ── 順序工具 ──────────────────────────────────────────────────────────────────
 /**
  * 依 order 升序排列。
@@ -118,6 +153,8 @@ function migrateOrCompactOrders() {
     }
     // 補上 source 欄位（舊資料一律視為 manual）
     records.forEach(r => { if (!r.source) r.source = 'manual'; });
+    // 補上 kind 欄位（舊資料一律 normal）
+    records.forEach(r => { if (!r.kind) r.kind = 'normal'; });
 
     // Migration：舊版 mergeImportedRecords 會把無 timestamp 的 Excel 紀錄填上
     // createdAt ISO 字串（含 'T'），導致排序時被當成近期紀錄。
@@ -134,11 +171,12 @@ function migrateOrCompactOrders() {
   });
 }
 
-/** 重新計算所有卡池 guaranteed 狀態：以「最上方紀錄」決定 */
+/** 重新計算所有卡池 guaranteed 狀態：以「最上方的正常紀錄」決定（略不算） */
 function recomputeAllGuaranteed() {
   Object.keys(state.pools).forEach(name => {
     if (!POOL_HAS_UP[name]) return;
-    const top = orderedRecords(state.pools[name].records)[0];
+    const top = orderedRecords(state.pools[name].records)
+      .find(r => r.kind !== 'skip');
     state.pools[name].guaranteed = top ? !!top.isOff : false;
   });
 }
@@ -568,6 +606,9 @@ function syncInputFromPool() {
   $('pity-now').value       = pool.pity;
   $('guaranteed').checked   = pool.guaranteed || false;
   $('guaranteed-row').style.display = POOL_HAS_UP[state.activePool] ? '' : 'none';
+  // 略 checkbox 一律顯示（每池都可能需要補記）
+  $('is-skip-row').style.display    = '';
+  $('is-skip').checked              = false;
   $('is-off-row').style.display     = POOL_HAS_UP[state.activePool] ? '' : 'none';
   $('up-banner-row').style.display  = 'none';
   updateInputPityBar();
@@ -631,6 +672,23 @@ upInput.addEventListener('blur', () =>
 $('is-off').addEventListener('change', () => {
   $('up-banner-row').style.display = $('is-off').checked ? '' : 'none';
   if (!$('is-off').checked) upInput.value = '';
+});
+
+// 「略」checkbox：勾起時隱藏歪/UP池欄位、自動填名稱
+$('is-skip').addEventListener('change', () => {
+  const isSkip = $('is-skip').checked;
+  if (isSkip) {
+    $('is-off-row').style.display    = 'none';
+    $('up-banner-row').style.display = 'none';
+    $('is-off').checked = false;
+    upInput.value = '';
+    if (!nameInput.value.trim()) nameInput.value = '略';
+    nameInput.placeholder = '補記抽數的說明，例如「略 v3.0 中段」';
+  } else {
+    $('is-off-row').style.display    = POOL_HAS_UP[state.activePool] ? '' : 'none';
+    nameInput.placeholder = '輸入名稱搜尋…';
+    if (nameInput.value === '略') nameInput.value = '';
+  }
 });
 
 // ── 編輯 Modal 的自動補全 ─────────────────────────────────────────────────────
@@ -710,6 +768,8 @@ function handleAcKey(e, list, input, getIdx, setIdx, onSelect) {
 // ── 自動勾選「歪了」：在 UP 池且名稱為常駐池角色/光錐時 ─────────────────────
 function maybeAutoCheckIsOff(input, checkbox) {
   if (!POOL_HAS_UP[state.activePool]) return;
+  // 「略」模式不適用歪判定
+  if ($('is-skip')?.checked) return;
   const name = (input.value || '').trim();
   if (!name) return;
   if (getEntryType(name) === 'standard' && !checkbox.checked) {
@@ -729,15 +789,18 @@ $('pull-count-input').addEventListener('keydown', e => {
 });
 
 function addRecord() {
-  const name      = nameInput.value.trim();
+  const isSkip    = !!$('is-skip').checked;
+  const name      = nameInput.value.trim() || (isSkip ? '略' : '');
   const pullCount = parseInt($('pull-count-input').value);
-  const isOff     = POOL_HAS_UP[state.activePool] ? $('is-off').checked : false;
+  const isOff     = !isSkip && POOL_HAS_UP[state.activePool] ? $('is-off').checked : false;
   const upBanner  = isOff ? (upInput.value.trim() || null) : null;
+  const kind      = isSkip ? 'skip' : 'normal';
 
   if (!name) {
     nameInput.style.borderColor = 'var(--red)'; nameInput.focus(); return;
   }
   nameInput.style.borderColor = '';
+  // 略也需要抽數（範圍同樣 1-90，略可能是短中段補記）
   if (!pullCount || pullCount < 1 || pullCount > 90) {
     $('pull-count-input').style.borderColor = 'var(--red)';
     $('pull-count-input').focus(); return;
@@ -752,7 +815,6 @@ function addRecord() {
 
   let newOrder;
   if (insertVal < 0 || sorted.length === 0) {
-    // 新增至最上方 → 變成 #1，全部下移
     pool.records.forEach(r => { r.order += 1; });
     newOrder = 1;
   } else {
@@ -766,22 +828,29 @@ function addRecord() {
   pool.records.push({
     id: newId(),
     name, pullCount, isOff, upBanner,
+    kind,                          // 'normal' | 'skip'
     order: newOrder,
     timestamp: new Date().toISOString(),
     source: 'manual',
   });
 
-  // 依「最上方紀錄」重算 guaranteed
+  // 依「最上方紀錄」重算 guaranteed（略不算）
   recomputeAllGuaranteed();
 
-  // 重置保底 + 清表單
-  pool.pity = 0;
-  $('pity-now').value = 0;
+  // 重置保底（略不重置 pity，正常紀錄才重置）
+  if (!isSkip) {
+    pool.pity = 0;
+    $('pity-now').value = 0;
+  }
   $('guaranteed').checked = pool.guaranteed;
   updateInputPityBar();
+  // 清表單
   nameInput.value = '';
+  nameInput.placeholder = '輸入名稱搜尋…';
   $('pull-count-input').value = '';
   $('is-off').checked = false;
+  $('is-skip').checked = false;
+  $('is-off-row').style.display    = POOL_HAS_UP[state.activePool] ? '' : 'none';
   $('up-banner-row').style.display = 'none';
   upInput.value = '';
   if ($('insert-pos')) $('insert-pos').value = '-1';
@@ -796,17 +865,20 @@ function openEditModal(recordId, poolName = state.activePool) {
   const rec  = pool?.records.find(r => r.id === recordId);
   if (!rec) return;
 
+  const isSkip = rec.kind === 'skip';
   state.editingId   = recordId;
-  state.editingPool = poolName;   // 記住改的是哪個池
-  $('edit-modal-order').textContent = `#${rec.order}  ·  ${poolName}`;
+  state.editingPool = poolName;
+  $('edit-modal-order').textContent =
+    `#${rec.order}  ·  ${poolName}${isSkip ? '  ·  📋 略' : ''}`;
   editNameInput.value = rec.name;
   editNameInput.style.borderColor = '';
   $('edit-pull-count-input').value = rec.pullCount;
   $('edit-pull-count-input').style.borderColor = '';
 
-  const showOff = POOL_HAS_UP[poolName];
+  // 略紀錄不顯示歪 / UP 池欄位
+  const showOff = POOL_HAS_UP[poolName] && !isSkip;
   $('edit-is-off-row').style.display = showOff ? '' : 'none';
-  $('edit-is-off').checked = !!rec.isOff;
+  $('edit-is-off').checked = isSkip ? false : !!rec.isOff;
   $('edit-up-banner-row').style.display = (showOff && rec.isOff) ? '' : 'none';
   editUpInput.value = rec.upBanner || '';
 
@@ -828,9 +900,10 @@ function saveEdit() {
   const rec  = pool?.records.find(r => r.id === id);
   if (!rec) { closeEditModal(); return; }
 
+  const isSkip    = rec.kind === 'skip';
   const name      = editNameInput.value.trim();
   const pullCount = parseInt($('edit-pull-count-input').value);
-  const isOff     = POOL_HAS_UP[poolName] ? $('edit-is-off').checked : false;
+  const isOff     = (!isSkip && POOL_HAS_UP[poolName]) ? $('edit-is-off').checked : false;
   const upBanner  = isOff ? (editUpInput.value.trim() || null) : null;
 
   if (!name) {
@@ -846,6 +919,7 @@ function saveEdit() {
   rec.pullCount = pullCount;
   rec.isOff     = isOff;
   rec.upBanner  = upBanner;
+  // rec.kind 不變（編輯不能改 normal ↔ skip，要改就刪掉重新建立）
 
   recomputeAllGuaranteed();
   // 若改的是現在 active pool，同步 guaranteed 顯示
@@ -892,8 +966,16 @@ function renderRecordList() {
   list.innerHTML = ordered.map((r, i) => {
     const isFirst = i === 0;
     const isLast  = i === ordered.length - 1;
+    const isSkip  = r.kind === 'skip';
+    const icon    = isSkip ? '📋' : '⭐';
+    const srcIcon = r.source === 'import' ? ' <span class="ri-source-icon" title="從遊戲匯入">📥</span>' : '';
+    const tagHtml = isSkip
+      ? '<span class="ri-tag skip">略</span>'
+      : (POOL_HAS_UP[state.activePool]
+          ? `<span class="ri-tag ${r.isOff ? 'off' : 'up'}">${r.isOff ? '歪' : 'UP'}</span>`
+          : '');
     return `
-    <div class="record-item" data-id="${esc(r.id)}" draggable="true">
+    <div class="record-item ${isSkip ? 'is-skip' : ''}" data-id="${esc(r.id)}" draggable="true">
       <span class="ri-order">#${r.order}</span>
       <span class="ri-drag" title="拖曳排序（桌面）">⠿</span>
       <div class="ri-move-group">
@@ -902,11 +984,9 @@ function renderRecordList() {
         <button class="ri-move" data-dir="down" data-id="${esc(r.id)}"
           ${isLast  ? 'disabled' : ''} title="下移">▼</button>
       </div>
-      <span class="ri-name">⭐ ${esc(r.name)}${r.source === 'import' ? ' <span class="ri-source-icon" title="從遊戲匯入">📥</span>' : ''}</span>
+      <span class="ri-name">${icon} ${esc(r.name)}${srcIcon}</span>
       <span class="ri-pity">${r.pullCount} 抽</span>
-      ${POOL_HAS_UP[state.activePool]
-        ? `<span class="ri-tag ${r.isOff ? 'off' : 'up'}">${r.isOff ? '歪' : 'UP'}</span>`
-        : ''}
+      ${tagHtml}
       <button class="ri-edit" data-id="${esc(r.id)}" title="編輯">✏️</button>
       <button class="ri-del"  data-id="${esc(r.id)}" title="刪除">✕</button>
     </div>`;
@@ -994,34 +1074,44 @@ function barColorClass(pullCount, limit) {
 function renderBarItem(r, pool, opts = {}) {
   const { editable = false, isFirst = false, isLast = false, pickerState = '' } = opts;
   const limit  = POOL_LIMIT[pool];
+  const isSkip = r.kind === 'skip';
   const pct    = Math.min(r.pullCount / limit * 100, 100).toFixed(1);
-  const color  = barColorClass(r.pullCount, limit);
-  const imgUrl = getImageUrl(r.name);
+  const color  = isSkip ? 'bar-gray' : barColorClass(r.pullCount, limit);
+  const imgUrl = isSkip ? null : getImageUrl(r.name);
   const hasUp  = POOL_HAS_UP[pool];
-  const tag    = hasUp
-    ? `<span class="bar-tag ${r.isOff ? 'off' : 'up'}">${r.isOff ? '歪' : 'UP'}</span>`
-    : '';
-  const sub    = r.upBanner ? `歪自：${r.upBanner}` : '';
+  const tag    = isSkip
+    ? '<span class="bar-tag skip">略</span>'
+    : (hasUp
+        ? `<span class="bar-tag ${r.isOff ? 'off' : 'up'}">${r.isOff ? '歪' : 'UP'}</span>`
+        : '');
+  const sub    = isSkip
+    ? '<div class="bar-sub">不計出金、僅補抽數</div>'
+    : (r.upBanner ? `<div class="bar-sub">歪自：${esc(r.upBanner)}</div>` : '');
 
   const srcIcon = r.source === 'import'
     ? ' <span class="bar-source-icon" title="從遊戲匯入">📥</span>' : '';
+  const skipClass = isSkip ? 'is-skip' : '';
+  // sub 此時已是 HTML（含 <div class="bar-sub">），三個渲染路徑都直接插
+  const subHtml = sub;
+
+  // 略紀錄縮圖：📋 emoji 而非角色圖
+  const thumbContent = isSkip
+    ? '📋'
+    : (imgUrl
+        ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
+             onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
+        : esc(r.name[0] || '?'));
 
   // ──────────────── Picker 模式：點擊選目標 ────────────────
-  // pickerState = 'pickable' (可點選為目標) / 'moving' (被選中、要被移動) / 'dimmed' (其他池)
   if (pickerState) {
     return `
-      <div class="bar-item ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''} ${pickerState}"
+      <div class="bar-item ${skipClass} ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''} ${pickerState}"
            data-id="${esc(r.id)}" data-pool="${pool}">
         <div class="bar-order">#${r.order}</div>
-        <div class="bar-thumb">
-          ${imgUrl
-            ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
-                 onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
-            : esc(r.name[0] || '?')}
-        </div>
+        <div class="bar-thumb">${thumbContent}</div>
         <div class="bar-content">
           <div class="bar-name">${esc(r.name)}${srcIcon}</div>
-          ${sub ? `<div class="bar-sub">${esc(sub)}</div>` : ''}
+          ${subHtml}
           <div class="bar-track">
             <div class="bar-fill ${color}" style="width:${pct}%"></div>
           </div>
@@ -1035,21 +1125,16 @@ function renderBarItem(r, pool, opts = {}) {
   if (editable) {
     const checked = statsSelectedIds.has(`${pool}:${r.id}`) ? 'checked' : '';
     return `
-      <div class="bar-item editable ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}"
+      <div class="bar-item editable ${skipClass} ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}"
            draggable="true" data-id="${esc(r.id)}" data-pool="${pool}">
         <span class="bar-drag" title="拖曳排序">⠿</span>
         <input type="checkbox" class="bar-cb" data-id="${esc(r.id)}" data-pool="${pool}" ${checked} />
         <div class="bar-order">#${r.order}</div>
-        <div class="bar-thumb">
-          ${imgUrl
-            ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
-                 onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
-            : esc(r.name[0] || '?')}
-        </div>
+        <div class="bar-thumb">${thumbContent}</div>
         <div class="bar-content">
           <input type="text" class="bar-name-input" data-id="${esc(r.id)}" data-pool="${pool}"
                  value="${esc(r.name)}" placeholder="名稱" />
-          ${sub ? `<div class="bar-sub">${esc(sub)}</div>` : ''}
+          ${subHtml}
           <div class="bar-track">
             <div class="bar-fill ${color}" style="width:${pct}%"></div>
           </div>
@@ -1072,17 +1157,12 @@ function renderBarItem(r, pool, opts = {}) {
 
   // ──────────────── 非編輯模式：純檢視 ────────────────
   return `
-    <div class="bar-item ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}">
+    <div class="bar-item ${skipClass} ${r.isOff ? 'is-off' : ''} ${r.source === 'import' ? 'is-import' : ''}">
       <div class="bar-order">#${r.order}</div>
-      <div class="bar-thumb">
-        ${imgUrl
-          ? `<img src="${esc(imgUrl)}" alt="${esc(r.name)}" loading="lazy"
-               onerror="this.parentElement.textContent='${esc(r.name[0] || '?')}'">`
-          : esc(r.name[0] || '?')}
-      </div>
+      <div class="bar-thumb">${thumbContent}</div>
       <div class="bar-content">
         <div class="bar-name">${esc(r.name)}${srcIcon}</div>
-        ${sub ? `<div class="bar-sub">${esc(sub)}</div>` : ''}
+        ${subHtml}
         <div class="bar-track">
           <div class="bar-fill ${color}" style="width:${pct}%"></div>
         </div>
@@ -1394,30 +1474,24 @@ function renderPoolStats(pool) {
   const limit   = POOL_LIMIT[pool];
   const hasUp   = POOL_HAS_UP[pool];
 
-  const totalPulls = records.reduce((s, r) => s + r.pullCount, 0) + p.pity;
-  const fiveCount  = records.length;
-  const avgPity    = fiveCount
-    ? (records.reduce((s, r) => s + r.pullCount, 0) / fiveCount).toFixed(1) : '—';
-  const upRecs     = records.filter(r => !r.isOff);
-  const avgUpPity  = (hasUp && upRecs.length)
-    ? (upRecs.reduce((s, r) => s + r.pullCount, 0) / upRecs.length).toFixed(1) : '—';
-  const offRate    = (hasUp && fiveCount)
-    ? `${(records.filter(r => r.isOff).length / fiveCount * 100).toFixed(0)}%` : '—';
+  const s = computePoolStats(pool);
+  // 若有略，總抽數標籤加註說明
+  const totalLbl = s.skipPulls > 0 ? `總抽數（含略 ${s.skipPulls}）` : '總抽數';
 
   const cells = hasUp
     ? [
-        { num: totalPulls, lbl: '總抽數' },
-        { num: fiveCount,  lbl: '出金次數' },
-        { num: avgPity,    lbl: '平均出金抽數' },
-        { num: avgUpPity,  lbl: '平均 UP 抽數' },
-        { num: offRate,    lbl: '歪率' },
-        { num: p.pity,     lbl: '目前保底進度' },
+        { num: s.totalPulls, lbl: totalLbl },
+        { num: s.fiveCount,  lbl: '出金次數' },
+        { num: s.avgPity,    lbl: '平均出金抽數' },
+        { num: s.avgUpPity,  lbl: '平均 UP 抽數' },
+        { num: s.offRate,    lbl: '歪率' },
+        { num: p.pity,       lbl: '目前保底進度' },
       ]
     : [
-        { num: totalPulls, lbl: '總抽數' },
-        { num: fiveCount,  lbl: '出金次數' },
-        { num: avgPity,    lbl: '平均出金抽數' },
-        { num: p.pity,     lbl: '目前保底進度' },
+        { num: s.totalPulls, lbl: totalLbl },
+        { num: s.fiveCount,  lbl: '出金次數' },
+        { num: s.avgPity,    lbl: '平均出金抽數' },
+        { num: p.pity,       lbl: '目前保底進度' },
       ];
 
   $(`sg-${pool}`).innerHTML = cells.map(c =>
@@ -1566,6 +1640,72 @@ $('export-btn').addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
+// ── Excel 匯出（.xlsx）────────────────────────────────────────────────────────
+async function exportExcel() {
+  await loadScriptOnce(XLSX_CDN);   // 與檔案匯入共用 SheetJS
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+
+  // ── 統計總覽（第一個分頁）──
+  const sumRows = [
+    ['卡池', '總抽數', '出金次數', '平均出金抽數', '平均 UP 抽數', '歪率', '目前已墊'],
+  ];
+  Object.keys(POOL_LIMIT).forEach(pool => {
+    const s = computePoolStats(pool);
+    sumRows.push([
+      poolDisplayName(pool),
+      s.totalPulls, s.fiveCount, s.avgPity, s.avgUpPity, s.offRate, s.pity,
+    ]);
+  });
+  const sumSheet = XLSX.utils.aoa_to_sheet(sumRows);
+  sumSheet['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 8 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, sumSheet, '統計總覽');
+
+  // ── 各池明細（每池一個分頁）──
+  let totalRows = 0;
+  Object.keys(POOL_LIMIT).forEach(pool => {
+    const records = orderedRecords(state.pools[pool].records);
+    if (!records.length) return;
+    const hasUp = POOL_HAS_UP[pool];
+
+    const rows = [['#', '名稱', '抽數', '狀態', '來源', '時間戳記']];
+    records.forEach(r => {
+      const status = r.kind === 'skip'
+        ? '略'
+        : (hasUp ? (r.isOff ? '歪' : 'UP') : '—');
+      rows.push([
+        r.order,
+        r.name,
+        r.pullCount,
+        status,
+        r.source === 'import' ? '匯入' : '手動',
+        r.timestamp || '',
+      ]);
+      totalRows++;
+    });
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols'] = [{ wch: 5 }, { wch: 18 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 20 }];
+    // Excel 分頁名稱上限 31 字、不可含特殊字元
+    const safeName = poolDisplayName(pool).slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, sheet, safeName);
+  });
+
+  if (totalRows === 0) {
+    showSync('error', '目前沒有任何紀錄可匯出');
+    return;
+  }
+
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  XLSX.writeFile(wb, `starrail-tracker-${stamp}.xlsx`);
+}
+
+$('export-excel-btn').addEventListener('click', () => {
+  exportExcel().catch(err => {
+    showSync('error', `Excel 匯出失敗：${err?.message || err}`);
+    console.error('[exportExcel]', err);
+  });
+});
+
 // ── JSON 備份：匯入 ──────────────────────────────────────────────────────────
 $('import-btn').addEventListener('click', () => $('import-file').click());
 $('import-file').addEventListener('change', e => {
@@ -1634,6 +1774,7 @@ $('copy-script-btn')?.addEventListener('click', async () => {
 
 // ── 匯入抽卡紀錄（連線 Flask 後端） ─────────────────────────────────────────
 let importPreviewData = null;   // 後端回傳的 raw 預覽資料
+let importPityAfterLast = {};   // 後端回傳的各池目前已墊抽數
 let importPreviewSource = 'authkey';   // 'authkey' | 'file' — 決定 confirm 時的插入模式
 
 const importBackend = $('import-backend');
@@ -1882,6 +2023,7 @@ $('import-file-preview-btn').addEventListener('click', async () => {
 
   importPreviewData = grouped;
   importPreviewSource = 'file';   // 標記為檔案來源，confirm 時用 file-insert-pos
+  importPityAfterLast = {};        // 檔案匯入沒有保底資訊，不更新 pity
 
   if (window._bannerMissLog) window._bannerMissLog.clear();
 
@@ -1928,6 +2070,7 @@ $('import-fetch-btn').addEventListener('click', async () => {
     if (data.error) throw new Error(data.error);
 
     importPreviewData = data.records || {};
+    importPityAfterLast = data.pity_after_last || {};   // 各池目前已墊抽數
     importPreviewSource = 'authkey';   // 標記來源（authkey 走 timestamp 排序）
 
     const totals = Object.entries(importPreviewData)
@@ -2073,25 +2216,42 @@ $('import-confirm-btn').addEventListener('click', () => {
     timestamp: '依時間戳記與現有紀錄混排',
   }[insertMode] || insertMode;
 
+  // 只有 authkey 來源才有 pity 資訊；組合「已墊抽數會更新」提示
+  const pityEntries = (importPreviewSource === 'authkey')
+    ? Object.entries(importPityAfterLast).filter(([p, v]) => Number.isFinite(v) && state.pools[p])
+    : [];
+  const pityHint = pityEntries.length
+    ? `<br><span style="color:var(--accent-h)">📊 目前已墊抽數會自動更新：` +
+      pityEntries.map(([p, v]) => `${poolDisplayName(p)} ${v}`).join('、') + `</span>`
+    : '';
+
   openConfirm({
     title: '確認匯入',
     message:
       `將匯入 <strong>${total}</strong> 筆五星紀錄。<br>` +
       `插入方式：<strong>${modeLabel}</strong><br>` +
-      `匯入紀錄會以 <strong>📥</strong> 標記。<br>` +
+      `匯入紀錄會以 <strong>📥</strong> 標記。${pityHint}<br>` +
       `<span style="color:var(--muted)">已存在的（gachaId 或同 name+pullCount+timestamp）會自動跳過。手動紀錄內容不會被修改。</span>`,
     onOk: () => {
       let added = 0;
       Object.keys(selected).forEach(pool => {
         added += mergeImportedRecords(pool, selected[pool], insertMode);
       });
+
+      // 自動更新各池目前已墊抽數（僅 authkey 來源）
+      pityEntries.forEach(([pool, pity]) => {
+        state.pools[pool].pity = Math.max(0, Math.min(pity, POOL_LIMIT[pool] - 1));
+      });
+
       recomputeAllGuaranteed();
       persistData();
 
       importPreviewData = null;
+      importPityAfterLast = {};
       importPreviewSource = 'authkey';   // 重置回預設
       $('import-preview').style.display = 'none';
-      setImportStatus('success', `✅ 已匯入 ${added} 筆新紀錄`);
+      setImportStatus('success',
+        `✅ 已匯入 ${added} 筆新紀錄${pityEntries.length ? '，並更新目前已墊抽數' : ''}`);
 
       renderAll();
     },

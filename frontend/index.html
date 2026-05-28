@@ -108,7 +108,13 @@
             </select>
           </div>
 
-          <!-- 是否歪（常駐池不顯示） -->
+          <!-- 標記為「略」（補記抽數，不算出金） -->
+          <label class="checkbox-label" id="is-skip-row">
+            <input type="checkbox" id="is-skip" />
+            📋 標記為「略」（補記中間遺失抽數、不算出金次數）
+          </label>
+
+          <!-- 是否歪（常駐池/略 不顯示） -->
           <label class="checkbox-label" id="is-off-row">
             <input type="checkbox" id="is-off" />
             歪了（未出 UP 目標）
@@ -558,6 +564,7 @@
     <footer class="app-footer">
       <button id="export-btn" class="btn-ghost" title="下載 JSON 備份">📤 匯出備份</button>
       <button id="import-btn" class="btn-ghost" title="從 JSON 還原資料">📥 匯入備份</button>
+      <button id="export-excel-btn" class="btn-ghost" title="下載 Excel（.xlsx）">📊 匯出 Excel</button>
       <input type="file" id="import-file" accept=".json,application/json" style="display:none" />
     </footer>
 

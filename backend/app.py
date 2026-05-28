@@ -153,7 +153,7 @@ def fetch_pool(url: str, gacha_type: str, pool_name: str = '') -> list:
     return all_records
 
 
-def extract_five_stars(raw_records: list, gacha_type: str) -> list:
+def extract_five_stars(raw_records: list, gacha_type: str):
     """
     把 HoYoLAB 原始抽卡資料 → 我們前端用的五星紀錄格式。
 
@@ -161,7 +161,11 @@ def extract_five_stars(raw_records: list, gacha_type: str) -> list:
     為了計算保底（從上一個五星之後算起），需要先反轉成舊→新，
     累計保底計數，到五星時記錄並歸零，最後再反轉回新→舊。
 
-    回傳格式（每筆）：
+    回傳：(five_stars, current_pity)
+      five_stars  : list（每筆格式如下）
+      current_pity: int，最後一個五星「之後」還墊了幾抽（= 使用者目前該池保底進度）
+
+    五星紀錄格式（每筆）：
     {
       gachaId:   str,    # HoYoLAB 唯一 id（用於去重）
       name:      str,
@@ -208,8 +212,11 @@ def extract_five_stars(raw_records: list, gacha_type: str) -> list:
             })
             pity_count = 0
 
+    # 迴圈結束後，pity_count = 最後一個五星之後墊的抽數（目前保底進度）
+    current_pity = pity_count
+
     # 反轉回「新→舊」，對應前端 #1 = 最新的慣例
-    return list(reversed(five_stars))
+    return list(reversed(five_stars)), current_pity
 
 
 # ─── API 端點 ────────────────────────────────────────────────────────────────
@@ -438,6 +445,7 @@ def import_records():
         return jsonify({'error': '缺少有效的抽卡網址（必須是完整 URL，含 authkey 與其他簽章參數）'}), 400
 
     results = {}
+    pity_after_last = {}   # 每池目前已墊抽數（最後一個五星之後）
     errors  = []
     meta    = {'fetched_at': time.strftime('%Y-%m-%d %H:%M:%S'),
                'total_pulls_per_pool': {}}
@@ -449,17 +457,19 @@ def import_records():
         gacha_type = GACHA_TYPES[pool_name]
         try:
             raw = fetch_pool(url, gacha_type, pool_name)
-            five_stars = extract_five_stars(raw, gacha_type)
+            five_stars, current_pity = extract_five_stars(raw, gacha_type)
             results[pool_name] = five_stars
+            pity_after_last[pool_name] = current_pity
             meta['total_pulls_per_pool'][pool_name] = len(raw)
         except Exception as e:
             results[pool_name] = []
             errors.append({'pool': pool_name, 'error': str(e)})
 
     return jsonify({
-        'records': results,
-        'errors':  errors,
-        'meta':    meta,
+        'records':         results,
+        'pity_after_last': pity_after_last,
+        'errors':          errors,
+        'meta':            meta,
     })
 
 
